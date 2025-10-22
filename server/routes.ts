@@ -1,13 +1,246 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
+import { scrapeProductFromUrl } from "./scraper";
+import { categorizeProduct } from "./gemini";
+import { insertWishlistItemSchema, insertCustomCategorySchema } from "@shared/schema";
+import { z } from "zod";
 
 export async function registerRoutes(app: Express): Promise<Server> {
-  // put application routes here
-  // prefix all routes with /api
+  // Scrape product from URL
+  app.post("/api/scrape", async (req, res) => {
+    try {
+      const { url } = req.body;
+      if (!url || typeof url !== "string") {
+        return res.status(400).json({ error: "URL is required" });
+      }
 
-  // use storage to perform CRUD operations on the storage interface
-  // e.g. storage.insertUser(user) or storage.getUserByUsername(username)
+      const scrapedProduct = await scrapeProductFromUrl(url);
+      res.json(scrapedProduct);
+    } catch (error) {
+      console.error("Scraping error:", error);
+      res.status(500).json({ error: "Failed to scrape product" });
+    }
+  });
+
+  // Get all wishlist items
+  app.get("/api/wishlist", async (req, res) => {
+    try {
+      const items = await storage.getWishlistItems();
+      res.json(items);
+    } catch (error) {
+      console.error("Error fetching wishlist:", error);
+      res.status(500).json({ error: "Failed to fetch wishlist items" });
+    }
+  });
+
+  // Get wishlist items by category
+  app.get("/api/wishlist/category/:category", async (req, res) => {
+    try {
+      const { category } = req.params;
+      const { subcategory } = req.query;
+      const items = await storage.getWishlistItemsByCategory(
+        category,
+        subcategory as string | undefined
+      );
+      res.json(items);
+    } catch (error) {
+      console.error("Error fetching category items:", error);
+      res.status(500).json({ error: "Failed to fetch category items" });
+    }
+  });
+
+  // Add wishlist item (with scraping and AI categorization)
+  app.post("/api/wishlist", async (req, res) => {
+    try {
+      const { url, manualCategory, manualSubcategory } = req.body;
+
+      if (!url) {
+        return res.status(400).json({ error: "URL is required" });
+      }
+
+      const scrapedProduct = await scrapeProductFromUrl(url);
+
+      let category = manualCategory;
+      let subcategory = manualSubcategory;
+
+      if (!category) {
+        const aiCategory = await categorizeProduct(
+          scrapedProduct.title,
+          scrapedProduct.brand,
+          url
+        );
+        category = aiCategory.category;
+        subcategory = aiCategory.subcategory;
+      }
+
+      const itemData = {
+        ...scrapedProduct,
+        category,
+        subcategory,
+      };
+
+      const validatedItem = insertWishlistItemSchema.parse(itemData);
+      const item = await storage.createWishlistItem(validatedItem);
+
+      res.json(item);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: "Invalid item data", details: error.errors });
+      }
+      console.error("Error adding wishlist item:", error);
+      res.status(500).json({ error: "Failed to add wishlist item" });
+    }
+  });
+
+  // Update wishlist item
+  app.patch("/api/wishlist/:id", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const updates = req.body;
+
+      const item = await storage.updateWishlistItem(id, updates);
+
+      if (!item) {
+        return res.status(404).json({ error: "Item not found" });
+      }
+
+      res.json(item);
+    } catch (error) {
+      console.error("Error updating wishlist item:", error);
+      res.status(500).json({ error: "Failed to update wishlist item" });
+    }
+  });
+
+  // Update price for a single item
+  app.post("/api/wishlist/:id/update-price", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const item = await storage.getWishlistItem(id);
+
+      if (!item) {
+        return res.status(404).json({ error: "Item not found" });
+      }
+
+      const scrapedProduct = await scrapeProductFromUrl(item.url);
+
+      const priceEntry = {
+        price: scrapedProduct.price,
+        currency: scrapedProduct.currency,
+        recordedAt: new Date().toISOString(),
+      };
+
+      const updatedItem = await storage.addPriceHistoryEntry(id, priceEntry);
+
+      if (!updatedItem) {
+        return res.status(404).json({ error: "Failed to update price" });
+      }
+
+      await storage.updateWishlistItem(id, {
+        inStock: scrapedProduct.inStock,
+      });
+
+      res.json(updatedItem);
+    } catch (error) {
+      console.error("Error updating price:", error);
+      res.status(500).json({ error: "Failed to update price" });
+    }
+  });
+
+  // Update prices for all items
+  app.post("/api/wishlist/update-all-prices", async (req, res) => {
+    try {
+      const items = await storage.getWishlistItems();
+      const updates = [];
+
+      for (const item of items) {
+        try {
+          const scrapedProduct = await scrapeProductFromUrl(item.url);
+
+          const priceEntry = {
+            price: scrapedProduct.price,
+            currency: scrapedProduct.currency,
+            recordedAt: new Date().toISOString(),
+          };
+
+          await storage.addPriceHistoryEntry(item.id, priceEntry);
+          await storage.updateWishlistItem(item.id, {
+            inStock: scrapedProduct.inStock,
+          });
+
+          updates.push({ id: item.id, success: true });
+        } catch (error) {
+          console.error(`Failed to update item ${item.id}:`, error);
+          updates.push({ id: item.id, success: false });
+        }
+      }
+
+      res.json({ updates });
+    } catch (error) {
+      console.error("Error updating all prices:", error);
+      res.status(500).json({ error: "Failed to update prices" });
+    }
+  });
+
+  // Delete wishlist item
+  app.delete("/api/wishlist/:id", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const success = await storage.deleteWishlistItem(id);
+
+      if (!success) {
+        return res.status(404).json({ error: "Item not found" });
+      }
+
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error deleting wishlist item:", error);
+      res.status(500).json({ error: "Failed to delete wishlist item" });
+    }
+  });
+
+  // Get custom categories
+  app.get("/api/categories", async (req, res) => {
+    try {
+      const categories = await storage.getCustomCategories();
+      res.json(categories);
+    } catch (error) {
+      console.error("Error fetching categories:", error);
+      res.status(500).json({ error: "Failed to fetch categories" });
+    }
+  });
+
+  // Create custom category
+  app.post("/api/categories", async (req, res) => {
+    try {
+      const validatedCategory = insertCustomCategorySchema.parse(req.body);
+      const category = await storage.createCustomCategory(validatedCategory);
+      res.json(category);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: "Invalid category data", details: error.errors });
+      }
+      console.error("Error creating category:", error);
+      res.status(500).json({ error: "Failed to create category" });
+    }
+  });
+
+  // Delete custom category
+  app.delete("/api/categories/:id", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const success = await storage.deleteCustomCategory(id);
+
+      if (!success) {
+        return res.status(404).json({ error: "Category not found" });
+      }
+
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error deleting category:", error);
+      res.status(500).json({ error: "Failed to delete category" });
+    }
+  });
 
   const httpServer = createServer(app);
 
