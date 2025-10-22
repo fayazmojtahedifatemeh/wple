@@ -61,17 +61,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const scrapedProduct = await scrapeProductFromUrl(url);
 
-      let category = manualCategory;
+      let category = manualCategory || "Extra";
       let subcategory = manualSubcategory;
 
-      if (!category) {
-        const aiCategory = await categorizeProduct(
-          scrapedProduct.title,
-          scrapedProduct.brand,
-          url
-        );
-        category = aiCategory.category;
-        subcategory = aiCategory.subcategory;
+      if (!manualCategory) {
+        try {
+          const aiCategory = await categorizeProduct(
+            scrapedProduct.title,
+            scrapedProduct.brand,
+            url
+          );
+          category = aiCategory.category;
+          subcategory = aiCategory.subcategory;
+        } catch (error) {
+          console.error("Failed to categorize product:", error);
+        }
       }
 
       const itemData = {

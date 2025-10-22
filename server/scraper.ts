@@ -13,31 +13,391 @@ export interface ScrapedProduct {
   url: string;
 }
 
-function getSiteSpecificSelectors(url: string) {
+interface SiteExtractor {
+  extractTitle($: cheerio.CheerioAPI): string | null;
+  extractPrice($: cheerio.CheerioAPI): { price: number; currency: string } | null;
+  extractImages($: cheerio.CheerioAPI, baseUrl: string): string[];
+  extractBrand?($: cheerio.CheerioAPI): string | undefined;
+  extractColors?($: cheerio.CheerioAPI): string[];
+  extractSizes?($: cheerio.CheerioAPI): string[];
+}
+
+function cleanText(text: string | undefined): string {
+  if (!text) return '';
+  return text.trim().replace(/\s+/g, ' ');
+}
+
+function parsePrice(priceText: string): number {
+  const cleaned = priceText.replace(/[^\d.,]/g, '');
+  const priceMatch = cleaned.match(/[\d,]+\.?\d*/);
+  return priceMatch ? parseFloat(priceMatch[0].replace(/,/g, '')) : 0;
+}
+
+function detectCurrency(text: string): string {
+  if (text.includes('£') || text.includes('GBP')) return '£';
+  if (text.includes('€') || text.includes('EUR')) return '€';
+  if (text.includes('$') || text.includes('USD')) return '$';
+  if (text.includes('¥') || text.includes('JPY') || text.includes('CNY')) return '¥';
+  if (text.includes('₹') || text.includes('INR')) return '₹';
+  return '$';
+}
+
+function parseSrcset(srcset: string): string {
+  const parts = srcset.split(',').map(s => s.trim());
+  const largest = parts[parts.length - 1];
+  return largest.split(' ')[0];
+}
+
+// Site-specific extractors
+
+const aymStudioExtractor: SiteExtractor = {
+  extractTitle($) {
+    return cleanText($('h1.product-title').text()) || null;
+  },
+  extractPrice($) {
+    const priceText = cleanText($('price-list sale-price').text());
+    if (!priceText) return null;
+    return {
+      price: parsePrice(priceText),
+      currency: detectCurrency(priceText),
+    };
+  },
+  extractImages($, baseUrl) {
+    const images: string[] = [];
+    $('scroll-carousel div.product-gallery__media img').each((_, el) => {
+      const srcset = $(el).attr('srcset');
+      if (srcset) {
+        images.push(parseSrcset(srcset));
+      } else {
+        const src = $(el).attr('src');
+        if (src && src.startsWith('http')) images.push(src);
+      }
+    });
+    return images.slice(0, 5);
+  },
+  extractColors($) {
+    const colors: string[] = [];
+    $('fieldset').each((_, fieldset) => {
+      const legend = $(fieldset).find('legend').text();
+      if (legend.includes('Colour')) {
+        $(fieldset).find('label.color-swatch span').each((_, el) => {
+          const color = cleanText($(el).text());
+          if (color) colors.push(color);
+        });
+      }
+    });
+    return colors;
+  },
+  extractSizes($) {
+    const sizes: string[] = [];
+    $('fieldset').each((_, fieldset) => {
+      const legend = $(fieldset).find('legend').text();
+      if (legend.includes('Size')) {
+        $(fieldset).find('label.block-swatch span').each((_, el) => {
+          const size = cleanText($(el).text());
+          if (size) sizes.push(size);
+        });
+      }
+    });
+    return sizes;
+  },
+};
+
+const gianaWorldExtractor: SiteExtractor = {
+  extractTitle($) {
+    return cleanText($('h1.product-title').text()) || null;
+  },
+  extractPrice($) {
+    const priceText = cleanText($('price-list sale-price, price-list regular-price').text());
+    if (!priceText) return null;
+    return {
+      price: parsePrice(priceText),
+      currency: detectCurrency(priceText),
+    };
+  },
+  extractImages($, baseUrl) {
+    const images: string[] = [];
+    $('scroll-carousel div.product-gallery__media img, .product-gallery img').each((_, el) => {
+      const srcset = $(el).attr('srcset');
+      if (srcset) {
+        images.push(parseSrcset(srcset));
+      } else {
+        const src = $(el).attr('src');
+        if (src && src.startsWith('http')) images.push(src);
+      }
+    });
+    return images.slice(0, 5);
+  },
+  extractColors($) {
+    const colors: string[] = [];
+    $('fieldset').each((_, fieldset) => {
+      const legend = $(fieldset).find('legend').text();
+      if (legend.toLowerCase().includes('colour') || legend.toLowerCase().includes('color')) {
+        $(fieldset).find('label span').each((_, el) => {
+          const color = cleanText($(el).text());
+          if (color && !color.includes('Color')) colors.push(color);
+        });
+      }
+    });
+    return colors;
+  },
+  extractSizes($) {
+    const sizes: string[] = [];
+    $('fieldset').each((_, fieldset) => {
+      const legend = $(fieldset).find('legend').text();
+      if (legend.toLowerCase().includes('size')) {
+        $(fieldset).find('label span').each((_, el) => {
+          const size = cleanText($(el).text());
+          if (size && !size.includes('Size')) sizes.push(size);
+        });
+      }
+    });
+    return sizes;
+  },
+};
+
+const zaraExtractor: SiteExtractor = {
+  extractTitle($) {
+    let title = cleanText($('h1.product-detail-card-info__title span.product-detail-card-info__name').text());
+    if (!title) title = cleanText($('span[data-qa-qualifier="product-detail-info-name"]').text());
+    return title || null;
+  },
+  extractPrice($) {
+    const priceText = cleanText($('span[data-qa-qualifier="price-amount-current"] span.money-amount__main').text());
+    if (!priceText) return null;
+    return {
+      price: parsePrice(priceText),
+      currency: detectCurrency(priceText),
+    };
+  },
+  extractImages($, baseUrl) {
+    const images: string[] = [];
+    $('picture[data-qa-qualifier="media-image"]').each((_, el) => {
+      const srcset = $(el).find('source').attr('srcset');
+      if (srcset) {
+        images.push(parseSrcset(srcset));
+      } else {
+        const src = $(el).find('img').attr('src');
+        if (src && src.startsWith('http')) images.push(src);
+      }
+    });
+    return images.slice(0, 5);
+  },
+  extractColors($) {
+    const colors: string[] = [];
+    $('ul.product-detail-color-selector__colors li.product-detail-color-item').each((_, el) => {
+      const color = cleanText($(el).find('span.screen-reader-text').text());
+      if (color) colors.push(color);
+    });
+    return colors;
+  },
+};
+
+const hmExtractor: SiteExtractor = {
+  extractTitle($) {
+    const jsonSchema = $('script#product-schema').html();
+    if (jsonSchema) {
+      try {
+        const data = JSON.parse(jsonSchema);
+        if (data.name) return cleanText(data.name);
+      } catch (e) {}
+    }
+    return cleanText($('h1').text()) || null;
+  },
+  extractPrice($) {
+    const jsonSchema = $('script#product-schema').html();
+    if (jsonSchema) {
+      try {
+        const data = JSON.parse(jsonSchema);
+        if (data.offers?.price) {
+          return {
+            price: parseFloat(data.offers.price),
+            currency: detectCurrency(data.offers.priceCurrency || '$'),
+          };
+        }
+      } catch (e) {}
+    }
+    const priceText = cleanText($('span[translate="no"]').text());
+    if (!priceText) return null;
+    return {
+      price: parsePrice(priceText),
+      currency: detectCurrency(priceText),
+    };
+  },
+  extractImages($, baseUrl) {
+    const jsonSchema = $('script#product-schema').html();
+    if (jsonSchema) {
+      try {
+        const data = JSON.parse(jsonSchema);
+        if (Array.isArray(data.image)) {
+          return data.image.slice(0, 5);
+        }
+      } catch (e) {}
+    }
+    return [];
+  },
+  extractColors($) {
+    const colors: string[] = [];
+    $('div[data-testid="color-selector-wrapper"] a[role="radio"]').each((_, el) => {
+      const color = $(el).attr('title');
+      if (color) colors.push(cleanText(color));
+    });
+    return colors;
+  },
+  extractSizes($) {
+    const sizes: string[] = [];
+    $('div[data-testid="size-selector"] ul[data-testid="grid"] div[role="radio"]').each((_, el) => {
+      const size = cleanText($(el).find('div').text());
+      if (size) sizes.push(size);
+    });
+    return sizes;
+  },
+};
+
+const farfetchExtractor: SiteExtractor = {
+  extractTitle($) {
+    return cleanText($('p[data-testid="product-short-description"]').text()) || null;
+  },
+  extractBrand($) {
+    return cleanText($('h1.ltr-i980jo a.ltr-1rkeqir-Body-Heading').text());
+  },
+  extractPrice($) {
+    const priceText = cleanText($('p[data-component="PriceLarge"]').text());
+    if (!priceText) return null;
+    return {
+      price: parsePrice(priceText),
+      currency: detectCurrency(priceText),
+    };
+  },
+  extractImages($, baseUrl) {
+    const images: string[] = [];
+    $('div.ltr-1kklpjs button.ltr-1c58b5g img').each((_, el) => {
+      const src = $(el).attr('src');
+      if (src && src.startsWith('http')) images.push(src);
+    });
+    return images.slice(0, 5);
+  },
+};
+
+const amazonExtractor: SiteExtractor = {
+  extractTitle($) {
+    return cleanText($('#productTitle').text()) || null;
+  },
+  extractPrice($) {
+    let priceText = cleanText($('span.a-price-whole').first().text());
+    if (!priceText) priceText = cleanText($('.a-price .a-offscreen').first().text());
+    if (!priceText) priceText = cleanText($('#priceblock_ourprice').text());
+    if (!priceText) return null;
+    return {
+      price: parsePrice(priceText),
+      currency: detectCurrency(priceText),
+    };
+  },
+  extractImages($, baseUrl) {
+    const images: string[] = [];
+    $('#altImages ul li.imageThumbnail img').each((_, el) => {
+      const src = $(el).attr('src');
+      if (src) {
+        const largeSrc = src.replace(/\._.*?_\./, '.');
+        images.push(largeSrc);
+      }
+    });
+    return images.slice(0, 5);
+  },
+  extractBrand($) {
+    return cleanText($('#bylineInfo, a#brand').text().replace('Visit the', '').replace('Store', '').trim());
+  },
+};
+
+const mytheresaExtractor: SiteExtractor = {
+  extractBrand($) {
+    return cleanText($('div.product__area__branding__designer a').text());
+  },
+  extractTitle($) {
+    return cleanText($('div.product__area__branding__name').text()) || null;
+  },
+  extractPrice($) {
+    const priceText = cleanText($('span.pricing__prices__price').text());
+    if (!priceText) return null;
+    return {
+      price: parsePrice(priceText),
+      currency: detectCurrency(priceText),
+    };
+  },
+  extractImages($, baseUrl) {
+    const images: string[] = [];
+    $('div.product__gallery__carousel div.swiper-wrapper div.swiper-slide').each((_, el) => {
+      if (!$(el).hasClass('swiper-slide-duplicate')) {
+        const src = $(el).find('img').attr('src');
+        if (src && src.startsWith('http')) images.push(src);
+      }
+    });
+    return images.slice(0, 5);
+  },
+  extractSizes($) {
+    const sizes: string[] = [];
+    $('div.dropdown__options__wrapper div.sizeitem').each((_, el) => {
+      if (!$(el).hasClass('sizeitem--placeholder')) {
+        const size = cleanText($(el).find('span.sizeitem__label').text());
+        if (size) sizes.push(size);
+      }
+    });
+    return sizes;
+  },
+};
+
+const yooxExtractor: SiteExtractor = {
+  extractBrand($) {
+    return cleanText($('h1.ItemInfo_designer__XsNGI a').text());
+  },
+  extractTitle($) {
+    return cleanText($('h2.ItemInfo_microcat__cTaMO a').text()) || null;
+  },
+  extractPrice($) {
+    const priceText = cleanText($('div.ItemInfo_price___W18c div.price[data-ta="current-price"]').text());
+    if (!priceText) return null;
+    return {
+      price: parsePrice(priceText),
+      currency: detectCurrency(priceText),
+    };
+  },
+  extractImages($, baseUrl) {
+    const images: string[] = [];
+    $('div.PicturesSlider_photoSlider__BUjaM img').each((_, el) => {
+      const src = $(el).attr('src');
+      if (src && src.startsWith('http')) images.push(src);
+    });
+    return images.slice(0, 5);
+  },
+  extractColors($) {
+    const colors: string[] = [];
+    $('div.ColorPicker_color-picker__VS_Ec a.ColorPicker_color-elem__KV09t').each((_, el) => {
+      const color = $(el).find('div.ColorPicker_color-sample__yS_FM').attr('title');
+      if (color) colors.push(cleanText(color));
+    });
+    return colors;
+  },
+  extractSizes($) {
+    const sizes: string[] = [];
+    $('div[data-ta="size-picker"] div.SizePicker_size-item__nL4z_').each((_, el) => {
+      const size = cleanText($(el).find('span.SizePicker_size-title__LucnR').text());
+      if (size) sizes.push(size);
+    });
+    return sizes;
+  },
+};
+
+function getExtractorForSite(url: string): SiteExtractor | null {
   const hostname = new URL(url).hostname.toLowerCase();
   
-  if (hostname.includes('amazon')) {
-    return {
-      title: ['#productTitle', 'h1.a-size-large'],
-      price: ['span.a-price-whole', '.a-price .a-offscreen', '#priceblock_ourprice'],
-      image: ['#landingImage', '#imgBlkFront', '.a-dynamic-image'],
-      brand: ['#bylineInfo', 'a#brand'],
-      availability: ['#availability span'],
-    };
-  } else if (hostname.includes('zara')) {
-    return {
-      title: ['.product-detail-info__header-name'],
-      price: ['.price__amount', '.money-amount__main'],
-      image: ['.product-detail-images__image'],
-      brand: [],
-    };
-  } else if (hostname.includes('hm.com') || hostname.includes('h&m')) {
-    return {
-      title: ['h1.ProductName-module--productTitle'],
-      price: ['span.ProductPrice-module--price'],
-      image: ['img.ProductImageCarousel-module--image'],
-    };
-  }
+  if (hostname.includes('aym-studio')) return aymStudioExtractor;
+  if (hostname.includes('gianaworld')) return gianaWorldExtractor;
+  if (hostname.includes('zara')) return zaraExtractor;
+  if (hostname.includes('hm.com') || hostname.includes('h&m')) return hmExtractor;
+  if (hostname.includes('farfetch')) return farfetchExtractor;
+  if (hostname.includes('amazon')) return amazonExtractor;
+  if (hostname.includes('mytheresa')) return mytheresaExtractor;
+  if (hostname.includes('yoox')) return yooxExtractor;
   
   return null;
 }
@@ -52,6 +412,9 @@ export async function scrapeProductFromUrl(url: string): Promise<ScrapedProduct>
         'Accept-Encoding': 'gzip, deflate, br',
         'Connection': 'keep-alive',
         'Upgrade-Insecure-Requests': '1',
+        'Sec-Fetch-Dest': 'document',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Site': 'none',
       },
       timeout: 15000,
       maxRedirects: 5,
@@ -60,29 +423,55 @@ export async function scrapeProductFromUrl(url: string): Promise<ScrapedProduct>
     const html = response.data;
     const $ = cheerio.load(html);
 
-    const siteSelectors = getSiteSpecificSelectors(url);
+    const siteExtractor = getExtractorForSite(url);
 
-    const title = extractTitle($, siteSelectors?.title);
-    const { price, currency } = extractPrice($, siteSelectors?.price);
-    const images = extractImages($, url, siteSelectors?.image);
-    const brand = extractBrand($, siteSelectors?.brand);
-    const inStock = extractStockStatus($, siteSelectors?.availability);
+    let title: string | null = null;
+    let priceData: { price: number; currency: string } | null = null;
+    let images: string[] = [];
+    let brand: string | undefined;
+    let colors: string[] | undefined;
+    let sizes: string[] | undefined;
+
+    if (siteExtractor) {
+      title = siteExtractor.extractTitle($);
+      priceData = siteExtractor.extractPrice($);
+      images = siteExtractor.extractImages($, url);
+      brand = siteExtractor.extractBrand?.($);
+      colors = siteExtractor.extractColors?.($);
+      sizes = siteExtractor.extractSizes?.($);
+    }
+
+    if (!title) {
+      title = fallbackExtractTitle($);
+    }
+    if (!priceData) {
+      priceData = fallbackExtractPrice($);
+    }
+    if (images.length === 0) {
+      images = fallbackExtractImages($, url);
+    }
+    if (!brand) {
+      brand = fallbackExtractBrand($);
+    }
 
     if (!title || title === 'Untitled Product') {
       throw new Error('Failed to extract product title - page may not be accessible');
     }
 
-    if (price === 0) {
+    if (!priceData || priceData.price === 0) {
       console.warn('[Scraper] Warning: Could not extract price for', url);
+      priceData = { price: 0, currency: '$' };
     }
 
     return {
       title,
-      price,
-      currency,
-      images,
+      price: priceData.price,
+      currency: priceData.currency,
+      images: images.length > 0 ? images : ['https://via.placeholder.com/400'],
       brand,
-      inStock,
+      inStock: true,
+      colors,
+      sizes,
       url,
     };
   } catch (error) {
@@ -103,9 +492,8 @@ export async function scrapeProductFromUrl(url: string): Promise<ScrapedProduct>
   }
 }
 
-function extractTitle($: cheerio.CheerioAPI, customSelectors?: string[]): string {
+function fallbackExtractTitle($: cheerio.CheerioAPI): string {
   const selectors = [
-    ...(customSelectors || []),
     'meta[property="og:title"]',
     'meta[name="twitter:title"]',
     'h1.product-title',
@@ -136,12 +524,11 @@ function extractTitle($: cheerio.CheerioAPI, customSelectors?: string[]): string
   return 'Untitled Product';
 }
 
-function extractPrice($: cheerio.CheerioAPI, customSelectors?: string[]): { price: number; currency: string } {
+function fallbackExtractPrice($: cheerio.CheerioAPI): { price: number; currency: string } {
   let priceText = '';
   let currency = '$';
 
   const selectors = [
-    ...(customSelectors || []),
     'meta[property="og:price:amount"]',
     'meta[property="product:price:amount"]',
     'span[itemprop="price"]',
@@ -172,25 +559,18 @@ function extractPrice($: cheerio.CheerioAPI, customSelectors?: string[]): { pric
     }
   }
 
-  if (priceText.includes('$')) currency = '$';
-  else if (priceText.includes('€')) currency = '€';
-  else if (priceText.includes('£')) currency = '£';
-  else if (priceText.includes('¥')) currency = '¥';
-  else if (priceText.includes('₹')) currency = '₹';
+  currency = detectCurrency(priceText);
 
-  const cleanedPrice = priceText.replace(/[^\d.,]/g, '');
-  const priceMatch = cleanedPrice.match(/[\d,]+\.?\d*/);
-  const price = priceMatch ? parseFloat(priceMatch[0].replace(/,/g, '')) : 0;
+  const price = parsePrice(priceText);
 
   return { price, currency };
 }
 
-function extractImages($: cheerio.CheerioAPI, baseUrl: string, customSelectors?: string[]): string[] {
+function fallbackExtractImages($: cheerio.CheerioAPI, baseUrl: string): string[] {
   const images: string[] = [];
   const seenUrls = new Set<string>();
 
   const selectors = [
-    ...(customSelectors || []),
     'meta[property="og:image"]',
     'meta[name="twitter:image"]',
     'img[itemprop="image"]',
@@ -234,9 +614,8 @@ function extractImages($: cheerio.CheerioAPI, baseUrl: string, customSelectors?:
   return images.slice(0, 5);
 }
 
-function extractBrand($: cheerio.CheerioAPI, customSelectors?: string[]): string | undefined {
+function fallbackExtractBrand($: cheerio.CheerioAPI): string | undefined {
   const selectors = [
-    ...(customSelectors || []),
     'meta[property="og:brand"]',
     'meta[itemprop="brand"]',
     '[itemprop="brand"]',
@@ -256,47 +635,6 @@ function extractBrand($: cheerio.CheerioAPI, customSelectors?: string[]): string
   }
 
   return undefined;
-}
-
-function extractStockStatus($: cheerio.CheerioAPI, customSelectors?: string[]): boolean {
-  const availabilityElement = $('meta[property="og:availability"], meta[itemprop="availability"]');
-  if (availabilityElement.length) {
-    const availability = availabilityElement.attr('content')?.toLowerCase();
-    if (availability?.includes('out') || availability?.includes('sold')) {
-      return false;
-    }
-    if (availability?.includes('instock') || availability?.includes('in stock')) {
-      return true;
-    }
-  }
-
-  const selectors = [
-    ...(customSelectors || []),
-    '.out-of-stock',
-    '[class*="sold-out"]',
-    '[class*="unavailable"]',
-    '[data-testid="out-of-stock"]',
-  ];
-
-  for (const selector of selectors) {
-    const element = $(selector);
-    if (element.length > 0) {
-      const text = element.text().toLowerCase();
-      if (text.includes('out') || text.includes('sold') || text.includes('unavailable')) {
-        return false;
-      }
-    }
-  }
-
-  const addToCartButton = $('[class*="add-to-cart"], [class*="add-to-bag"], button[type="submit"]');
-  if (addToCartButton.length > 0) {
-    const buttonText = addToCartButton.text().toLowerCase();
-    if (buttonText.includes('out of stock') || buttonText.includes('sold out')) {
-      return false;
-    }
-  }
-
-  return true;
 }
 
 function getCurrencySymbol(code: string): string {

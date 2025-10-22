@@ -35,7 +35,7 @@ export const wishlistItems = pgTable("wishlist_items", {
   currency: text("currency").notNull().default("$"),
   url: text("url").notNull(),
   images: text("images").array().notNull().default(sql`ARRAY[]::text[]`),
-  category: text("category").notNull(),
+  category: text("category").notNull().default("Extra"),
   subcategory: text("subcategory"),
   customCategoryId: varchar("custom_category_id"),
   inStock: boolean("in_stock").notNull().default(true),

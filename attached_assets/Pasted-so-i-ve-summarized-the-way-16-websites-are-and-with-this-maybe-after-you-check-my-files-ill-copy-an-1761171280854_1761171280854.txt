@@ -1,0 +1,178 @@
+so i've summarized the way 16 websites are and with this maybe after you check my files (ill copy and paste any file you want here)you know what to add, what to change, to make the scraper much much better and it can handle many websites, not just these ones, if it needs java or something u have to tell me how to do that.:
+
+1. H&M
+Name: JSON from <script id="product-schema"> (name) OR text in <h1>.
+Price: JSON from <script id="product-schema"> (price in offers) OR text in span[translate="no"].
+Colors: Target div[data-testid="color-selector-wrapper"], find a[role="radio"], get title (name), img src (swatch), href (link).
+Sizes: Target div[data-testid="size-selector"], find ul[data-testid="grid"] -> div[role="radio"], get inner div text (name - clean it), aria-label (availability).
+Images: JSON from <script id="product-schema"> (image array).
+2. Zara
+Name: Target h1.product-detail-card-info__title, get text from inner span.product-detail-card-info__name (or span[data-qa-qualifier="product-detail-info-name"]).
+Price: Target span[data-qa-qualifier="price-amount-current"], get text from inner span.money-amount__main.
+Colors: Target ul.product-detail-color-selector__colors, find li.product-detail-color-item, find button -> get text from span.screen-reader-text (name).
+Sizes: ⚠️ Not in static HTML. Requires JavaScript execution (Selenium/Puppeteer) or finding an API. Look for button data-qa-action="open-size-selector".
+Images: Target all picture[data-qa-qualifier="media-image"], parse srcset in <source> for best URLs, or use img src.
+3. AYM Studio (Shopify)
+Name: Text inside h1.product-title.
+Price: Text inside <sale-price> within <price-list>.
+Colors: Target <fieldset> with legend "Colour:", find label.color-swatch, get text from inner <span> (name), check associated input[checked] for selected.
+Sizes: Target <fieldset> with legend "Size:", find label.block-swatch, get text from inner <span> (name), check label class for is-disabled (availability), check associated input[checked] for selected.
+Images: Target <scroll-carousel>, find div.product-gallery__media -> <img>, parse srcset for best URLs, or use src.
+4. Coach Outlet
+Name: Text inside h1[data-qa="pdp_txt_pdt_title"].
+Price: Text inside p[data-qa="cm_txt_pdt_price"]. (Note also p[data-qa="txt_comparable_value_price"]).
+Colors: Target div.color-images-swatches, find button.variant-image-swatch, get title (name), img src (swatch), check button class for activeColorSwatch (selected).
+Sizes: Target div.product-size-controls, find div.controls-btn-wrapper -> button.variation-size, get button text (name), check aria-disabled="true" (availability).
+Images: Target ul.splide__list in thumbnail slider, find li > div > img, get src (thumbnail). Modify URL ($desktopThumbnail$ -> $desktopProduct$) for main image OR parse data-lgimg JSON on thumbnail img tags.
+5. Amazon
+Name: Text inside <h1> with ID productTitle.
+Price: Target span.a-price-whole, span.a-price-fraction, span.a-price-symbol within price containers like #corePrice_feature_div.
+Style/Config Options: Target div#tp-inline-twister-dim-values-container, find ul > li, get text from span.swatch-title-text. Check parent span for a-button-selected. Check div.dimension-slot-info for price/availability.
+Sizes: Similar structure to Style/Config, look for container labeled for size (e.g., aria-labelledby="size_name").
+Images: Target div#altImages ul, find li.imageThumbnail > ... > img for thumbnails (src). For main images, check img.a-dynamic-image in #main-image-container for src and data-old-hires, or find embedded JSON/JS data (e.g., ImageBlockATF).
+6. The Outnet (Zimmermann product)
+Name: Target h1.ProductInformation89__designerInfoContainer, get text from span.ProductInformation89__name. (Designer in span.ProductInformation89__designer).
+Price: Target div.PriceWithSchema11--details. Current price in span.PriceWithSchema11__value, Original price in span.PriceWithSchema11__previousPrice.
+Colors: Target p.ProductDetailsColours89__colourHeading, get text from span.ProductDetailsColours89__colourName. (Only shows selected color in snippet).
+Sizes: Target ul.GridSelect11, find li.GridSelect11__optionWrapper, get text/aria-label from label.GridSelect11__optionBox (name/availability).
+Images: Target ul.ImageCarousel89__track, find li.ImageCarousel89__slide, get srcset from picture > source or picture > img and parse for best URL.
+7. Etsy
+Name: Text inside h1[data-buy-box-listing-title="true"].
+Price: Target div[data-selector="price-only"]. Current price in p.wt-text-title-larger, Original price in span.wt-text-strikethrough.
+Colors: Often part of "Personalization". Parse instructions text in div[data-instructions-container].
+Sizes/Variations: Target div[data-selector="listing-page-variation"]. Find label span[data-label] (variation name), find select -> get text from <option> tags (options/prices). Check <option selected>.
+Images: Target ul[data-carousel-pane-list], find li[data-carousel-pane], get src and srcset from <img>. Parse srcset for best URL. (Thumbnails in ul[data-carousel-pagination-list]).
+8. Charles Tyrwhitt
+Name: Text inside h1.product-name.
+Price: Target span.js-thumb-now-price, get text from inner span[aria-hidden="true"]. (Note also span.js-thumb-was-price).
+Colors: Target div.colour-swatching, find a.js-pdpcolourswatch and img.colourSwitch--selected. Get data-colour or alt (name), img src (swatch), href (link).
+Sizes: Target ul[data-variation-attr-id="jacketSize"] (or similar ID), find li.js-attribute-swatch. Get text from div.swatchanchor (name). Check li class for attribute__swatch--available.
+Images: Target ul.slick-track with button.pdpimage__item, find li > div > button > img. Get src/data-src (thumbnail). Parse data-lgimg JSON for main image URL.
+9. The Fold (BigCommerce)
+Name: Text inside h1.productView-title.
+Price: Text inside span[data-product-price-with-tax].
+Colors: Target div.color-products-section > ul, find li.color-product. Get data-product-name (name), img src (swatch). Check li class active for selected.
+Sizes: Target div[data-product-attribute="set-rectangle"], find div.form-option-wrapper. Get text from span.form-option-variant (name). Check label class for unavailable.
+Images: Target div.slick-track inside div.productView-img-container. Find div.productView-img, get data-srcset from <img> and parse for best URL.
+10. Ralph Lauren
+Best Method (JSON): Find div#pdp-schema-objects, get schema-productgroup attribute, parse JSON. Get name, offers.price, image array, and hasVariant array (for all colors/sizes).
+Fallback Method (HTML):
+Name: Text inside h1.product-name.
+Price: Text inside span.price-sales.
+Colors: Target ul.color-swatches, find li.variations-attribute. Get data-color from a.swatch (name), img src (swatch). Check li.selected.
+Sizes: Target ul.size-swatches, find li.variations-attribute. Get text from bdi tag (name). Check li.selected. Check div.nis-tooltip for unavailable.
+Images: Target div.swiper-wrapper in div.pdp-media-container, find div.swiper-slide. Get data-img or srcset from img or source tags.
+11. J.Crew
+Name: Text inside h1[data-qaid="pdpProductName"].
+Price: Target div[data-qaid="pdpProductPrice"]. Current price in span[data-qaid="pdpProductPriceSale"], Original price in span[data-qaid="pdpProductPriceRegular"].
+Colors: Target div[data-qaid="pdpProductPriceColorsGroupListWrapper-0"], find div[data-qaid^="pdpProductPriceColorsGroupListItem-"]. Get data-name (name), img src (swatch). Check for ProductPriceColors__is-unavailable___RcS39 (availability) and is-selected.
+Sizes: ⚠️ Not in static HTML. Only selected size is visible in div.ProductSizesDropdown__btn-label___N4KMG. Full list requires JavaScript.
+Images: Target div#productRevampedScroll, find <figure> elements, get src and srcset from the <img> tag with class RevampedZoomImage__unscaled-image___l7huD.
+12. The RealReal
+Name (Brand): Text inside div.brand > a.
+Name (Product): Text inside div.product-name.
+Price: Text inside div.product-price-info__reduced-price. (Original price in div.product-price-info__strike-through-price).
+Colors: ⚠️ No options. Descriptive only. Find dd#pdp-details-Description and parse ul > li for color text.
+Sizes: ⚠️ No options. Descriptive only. Find div.pdp-title__size and get its text.
+Images: Target div.main-image, find all figure.image, get data-zoom attribute from the <img> tag inside.
+13. Max Mara
+Name (Brand): Text inside span.product-labels__label.--uppercase.
+Name (Product): Text inside h1 (within div.pdp__info__header__name).
+Price: Text inside span.prices__full.
+Colors: Target div.pdp-colors__swatches, find a.pdp-colors__swatches__color. Get alt from <img> (name), src from <img> (swatch). Check a tag class --selected.
+Sizes: Target div.pdp__info__header__sizes__selectors, find div.pdp__info__header__sizes__selectors__selector. Get text from <label> (name). Check input for data-unavailable attribute.
+Images: Target div.slick-track in div.pdp__images__wrapper, find div.slick-slide (non-slick-cloned). Get data-lazy or data-src from <img> tag.
+
+Mytheresa Scraping Rules Summary
+This is the first site you just sent.
+
+Product Name & Brand:
+Brand: Target div.product__area__branding__designer. Get the text from the a tag inside.
+Result: "Saint Laurent"
+Name: Target div.product__area__branding__name. Get its text content.
+Result: "Jill 95 leather ankle boots"
+Product Price:
+Target: Find the span with the class pricing__prices__price.
+Action: Get its text content.
+Result: "£ 1,290"
+Color Choices: ⚠️ Not in snippet.
+Observation: The HTML you sent does not contain any color swatches or selectors. The color is only mentioned in the "product details" accordion (Designer color name: Bordeaux).
+Rule: If there are other colors, they are not loaded in this part of the HTML. You would need to inspect the full page to find them (if they exist).
+Size Choices:
+Target: Find the div.dropdown__options__wrapper.
+Action: Inside it, find all div.sizeitem elements (excluding the sizeitem--placeholder).
+For each div:
+Size Name: Get the text from span.sizeitem__label.
+Availability: Check the div.sizeitem element. If it has the class sizeitem--notavailable, it is out of stock. If it has sizeitem__quantityleft, it is in stock (e.g., "Low stock", "Last piece").
+Selected Size: The currently selected size is shown in div.dropdown__select__content__text__value.
+Product Images:
+Target: Find the div.swiper-wrapper inside the div.product__gallery__carousel.
+Action: Find all div.swiper-slide elements (that are not clones).
+For each slide: Find the <img> tag inside and get its src attribute.
+Example URL: https://www.mytheresa.com/media/1094/1238/100/91/P00998153.jpg
+Thumbnails: You can find thumbnails in div.product__gallery__thumbscarousel img.
+YOOX Scraping Rules Summary
+This is the second site you just sent.
+
+Product Name & Brand:
+Brand: Target h1.ItemInfo_designer__XsNGI. Get the text from the a tag inside.
+Result: "VERSACE"
+Name: Target h2.ItemInfo_microcat__cTaMO. Get the text from the a tag inside.
+Result: "PUMPS"
+Product Price:
+Target: Find the div.ItemInfo_price___W18c.
+Action:
+Current Price: Get the text from div.price[data-ta="current-price"]. Result: "US$ 1.086".
+Original Price: Get the text from span[data-ta="retail-price"]. Result: "US$ 1.529".
+Discount: Get the text from span.css-6pf3ri. Result: "(-28%)".
+Color Choices:
+Target: Find the div.ColorPicker_color-picker__VS_Ec.
+Action: Find all a.ColorPicker_color-elem__KV09t tags.
+For each a tag:
+Color Name: Get the title attribute from the div.ColorPicker_color-sample__yS_FM inside. (e.g., "Fuchsia", "Pink", "Black").
+Selected Color: Check which a tag has the class ColorPicker_selected__Xvhg_.
+Size Choices:
+Target: Find the div with data-ta="size-picker".
+Action: Inside it, find all div.SizePicker_size-item__nL4z_ elements.
+For each div:
+Size Name: Get the text from span.SizePicker_size-title__LucnR (e.g., "35", "36", "41").
+Availability: Check if the div has the class SizePicker_disabled__ma4Lp. If it does, it's unavailable.
+Product Images:
+Target: Find the div.PicturesSlider_photoSlider__BUjaM.
+Action: Find all div.react-swipeable-view-container -> div > span > img.
+For each img: Get its src attribute. The src seems to already be a high-resolution version.
+Example URL: https://www.yoox.com/images/items/17/17568816SO_14_f.jpg?impolicy=crop&width=387&height=490
+Thumbnails: You can find thumbnails in div.thumbnails_thumb__KgHTX img.
+
+Farfetch Scraping Rules Summary
+1. Product Name & Brand
+Brand:
+Target: Find the <h1> tag with class ltr-i980jo. Inside it, find the a tag with class ltr-1rkeqir-Body-Heading.
+Action: Get its text content.
+Result: "LOEWE"
+Name:
+Target: Find the p tag with data-testid="product-short-description".
+Action: Get its text content.
+Result: "90mm T-strap pumps"
+2. Product Price
+Target: Find the p tag with data-component="PriceLarge".
+Action: Get its text content.
+Result: "¥13,225"
+Note: There is also an info line p[data-component="PriceExtraInfo"] ("Import duties included").
+3. Color Choices ⚠️ Not in snippet.
+Observation: The HTML you sent does not contain any color swatches or selectors. The color is only mentioned in the image alt text ("Red").
+Rule: If this product comes in other colors, the selectors are not present in this part of the HTML. You would need to inspect the full page to find them.
+4. Size Choices ⚠️ (Partial Info)
+Observation: This site uses a dynamic dropdown for sizes. The static HTML only shows the currently selected or default size.
+Target: Find the div with data-testid="ScaledSizeSelector".
+Action (to get selected size): Get the text content of the div.ltr-176iw6e inside it.
+Result: "37 IT"
+Rule (to get all sizes): ⚠️ Not in static HTML. The full list of sizes is not present. Your app would need to execute JavaScript to click the dropdown (the div.ltr-1aksjyr) to make the list visible.
+5. Product Images
+Target: Find the div with the class ltr-1kklpjs (the main image container).
+Action: Inside it, find all button.ltr-1c58b5g elements.
+For each button:
+Find the <img> tag inside.
+Get the src attribute for the main image URL.
+Get the alt attribute for the image description (e.g., "LOEWE 90mm T-strap pumps | Red | Image 1").
+Example URL: https://cdn-images.farfetch-contents.com/32/35/42/63/32354263_62407784_1000.jpg
