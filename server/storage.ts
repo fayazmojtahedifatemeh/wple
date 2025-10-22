@@ -1,4 +1,8 @@
+// Blueprint: javascript_database
 import { 
+  users,
+  wishlistItems,
+  customCategories,
   type User, 
   type InsertUser,
   type WishlistItem,
@@ -8,7 +12,8 @@ import {
   type InsertCustomCategory,
   type PriceHistoryEntry
 } from "@shared/schema";
-import { randomUUID } from "crypto";
+import { db } from "./db";
+import { eq, and, sql } from "drizzle-orm";
 
 export interface IStorage {
   getUser(id: string): Promise<User | undefined>;
@@ -30,136 +35,122 @@ export interface IStorage {
   deleteCustomCategory(id: string): Promise<boolean>;
 }
 
-export class MemStorage implements IStorage {
-  private users: Map<string, User>;
-  private wishlistItems: Map<string, WishlistItem>;
-  private customCategories: Map<string, CustomCategory>;
-
-  constructor() {
-    this.users = new Map();
-    this.wishlistItems = new Map();
-    this.customCategories = new Map();
-  }
-
+export class DatabaseStorage implements IStorage {
   async getUser(id: string): Promise<User | undefined> {
-    return this.users.get(id);
+    const [user] = await db.select().from(users).where(eq(users.id, id));
+    return user || undefined;
   }
 
   async getUserByUsername(username: string): Promise<User | undefined> {
-    return Array.from(this.users.values()).find(
-      (user) => user.username === username,
-    );
+    const [user] = await db.select().from(users).where(eq(users.username, username));
+    return user || undefined;
   }
 
   async createUser(insertUser: InsertUser): Promise<User> {
-    const id = randomUUID();
-    const user: User = { ...insertUser, id };
-    this.users.set(id, user);
+    const [user] = await db
+      .insert(users)
+      .values(insertUser)
+      .returning();
     return user;
   }
 
   // Wishlist items
   async getWishlistItems(): Promise<WishlistItem[]> {
-    return Array.from(this.wishlistItems.values());
+    return await db.select().from(wishlistItems);
   }
 
   async getWishlistItem(id: string): Promise<WishlistItem | undefined> {
-    return this.wishlistItems.get(id);
+    const [item] = await db.select().from(wishlistItems).where(eq(wishlistItems.id, id));
+    return item || undefined;
   }
 
   async getWishlistItemsByCategory(category: string, subcategory?: string): Promise<WishlistItem[]> {
-    return Array.from(this.wishlistItems.values()).filter(item => {
-      if (subcategory) {
-        return item.category === category && item.subcategory === subcategory;
-      }
-      return item.category === category;
-    });
+    if (subcategory) {
+      return await db
+        .select()
+        .from(wishlistItems)
+        .where(and(eq(wishlistItems.category, category), eq(wishlistItems.subcategory, subcategory)));
+    }
+    return await db.select().from(wishlistItems).where(eq(wishlistItems.category, category));
   }
 
   async createWishlistItem(insertItem: InsertWishlistItem): Promise<WishlistItem> {
-    const id = randomUUID();
-    const now = new Date();
-    
     const currency = insertItem.currency || "$";
     const price = typeof insertItem.price === 'string' ? parseFloat(insertItem.price) : insertItem.price;
     
     const initialPriceEntry: PriceHistoryEntry = {
       price,
       currency,
-      recordedAt: now.toISOString(),
+      recordedAt: new Date().toISOString(),
     };
     
-    const item: WishlistItem = { 
-      ...insertItem,
-      brand: insertItem.brand ?? null,
-      subcategory: insertItem.subcategory ?? null,
-      customCategoryId: insertItem.customCategoryId ?? null,
-      colors: insertItem.colors ?? null,
-      sizes: insertItem.sizes ?? null,
-      currency,
-      id,
-      createdAt: now,
-      updatedAt: now,
-      priceHistory: [initialPriceEntry],
-    };
-    this.wishlistItems.set(id, item);
+    const [item] = await db
+      .insert(wishlistItems)
+      .values({
+        ...insertItem,
+        currency,
+        priceHistory: [initialPriceEntry],
+      })
+      .returning();
+    
     return item;
   }
 
   async updateWishlistItem(id: string, updates: UpdateWishlistItem): Promise<WishlistItem | undefined> {
-    const item = this.wishlistItems.get(id);
-    if (!item) return undefined;
+    const [item] = await db
+      .update(wishlistItems)
+      .set({
+        ...updates,
+        updatedAt: new Date(),
+      })
+      .where(eq(wishlistItems.id, id))
+      .returning();
     
-    const updatedItem: WishlistItem = {
-      ...item,
-      ...updates,
-      id: item.id,
-      createdAt: item.createdAt,
-      priceHistory: item.priceHistory,
-      updatedAt: new Date(),
-    };
-    this.wishlistItems.set(id, updatedItem);
-    return updatedItem;
+    return item || undefined;
   }
 
   async addPriceHistoryEntry(id: string, entry: PriceHistoryEntry): Promise<WishlistItem | undefined> {
-    const item = this.wishlistItems.get(id);
+    const item = await this.getWishlistItem(id);
     if (!item) return undefined;
     
-    const updatedItem: WishlistItem = {
-      ...item,
-      price: entry.price.toString(),
-      priceHistory: [...item.priceHistory, entry],
-      updatedAt: new Date(),
-    };
-    this.wishlistItems.set(id, updatedItem);
-    return updatedItem;
+    const newHistory = [...item.priceHistory, entry];
+    
+    const [updatedItem] = await db
+      .update(wishlistItems)
+      .set({
+        price: entry.price.toString(),
+        priceHistory: newHistory as any,
+        updatedAt: new Date(),
+      })
+      .where(eq(wishlistItems.id, id))
+      .returning();
+    
+    return updatedItem || undefined;
   }
 
   async deleteWishlistItem(id: string): Promise<boolean> {
-    return this.wishlistItems.delete(id);
+    const result = await db.delete(wishlistItems).where(eq(wishlistItems.id, id));
+    return result.rowCount ? result.rowCount > 0 : false;
   }
 
   // Custom categories
   async getCustomCategories(): Promise<CustomCategory[]> {
-    return Array.from(this.customCategories.values());
+    return await db.select().from(customCategories);
   }
 
   async createCustomCategory(insertCategory: InsertCustomCategory): Promise<CustomCategory> {
-    const id = randomUUID();
-    const category: CustomCategory = {
-      ...insertCategory,
-      icon: insertCategory.icon ?? null,
-      id,
-      createdAt: new Date(),
-    };
-    this.customCategories.set(id, category);
+    const [category] = await db
+      .insert(customCategories)
+      .values(insertCategory)
+      .returning();
+    
     return category;
   }
 
   async deleteCustomCategory(id: string): Promise<boolean> {
-    return this.customCategories.delete(id);
+    const result = await db.delete(customCategories).where(eq(customCategories.id, id));
+    return result.rowCount ? result.rowCount > 0 : false;
   }
 }
 
-export const storage = new MemStorage();
+export const storage = new DatabaseStorage();

@@ -1,95 +1,95 @@
 import { useState } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Plus, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ProductCard } from "@/components/ProductCard";
 import { ActivityFeedItem } from "@/components/ActivityFeedItem";
 import { AddItemModal } from "@/components/AddItemModal";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import dressImage from "@assets/generated_images/Purple_dress_product_photo_23fef3a8.png";
-import shoesImage from "@assets/generated_images/White_sneakers_product_photo_52d3741a.png";
-import bagImage from "@assets/generated_images/Pink_handbag_product_photo_0ce8bd29.png";
-import perfumeImage from "@assets/generated_images/Perfume_bottle_product_photo_2fcdbdcb.png";
+import { fetchWishlistItems, updateAllPrices } from "@/lib/api";
+import { useToast } from "@/hooks/use-toast";
+import type { WishlistItem } from "@shared/schema";
+
+function calculatePriceChange(item: WishlistItem): number | undefined {
+  if (item.priceHistory.length < 2) return undefined;
+  
+  const currentPrice = item.priceHistory[item.priceHistory.length - 1].price;
+  const previousPrice = item.priceHistory[item.priceHistory.length - 2].price;
+  
+  return ((currentPrice - previousPrice) / previousPrice) * 100;
+}
+
+function getActivityFeed(items: WishlistItem[]) {
+  const activities: any[] = [];
+  
+  items.forEach(item => {
+    if (item.priceHistory.length >= 2) {
+      const currentPrice = item.priceHistory[item.priceHistory.length - 1].price;
+      const previousPrice = item.priceHistory[item.priceHistory.length - 2].price;
+      const priceChange = ((currentPrice - previousPrice) / previousPrice) * 100;
+      
+      if (Math.abs(priceChange) > 0.1) {
+        activities.push({
+          id: `price-${item.id}`,
+          type: priceChange < 0 ? "price_drop" : "price_increase",
+          productTitle: item.title,
+          productImage: item.images[0],
+          oldPrice: previousPrice,
+          newPrice: currentPrice,
+          priceChange,
+          timestamp: new Date(item.priceHistory[item.priceHistory.length - 1].recordedAt).toLocaleString(),
+        });
+      }
+    }
+  });
+  
+  return activities.slice(0, 10);
+}
 
 export default function Home() {
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
-  const [isUpdating, setIsUpdating] = useState(false);
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+
+  const { data: wishlistItems = [], isLoading, error } = useQuery({
+    queryKey: ["wishlist"],
+    queryFn: fetchWishlistItems,
+  });
+
+  const updatePricesMutation = useMutation({
+    mutationFn: updateAllPrices,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["wishlist"] });
+      toast({
+        title: "Success",
+        description: "All prices have been updated",
+      });
+    },
+    onError: (error) => {
+      toast({
+        title: "Error",
+        description: "Failed to update prices",
+        variant: "destructive",
+      });
+    },
+  });
 
   const handleUpdateAll = () => {
-    setIsUpdating(true);
-    console.log("Updating all prices...");
-    setTimeout(() => setIsUpdating(false), 2000);
+    updatePricesMutation.mutate();
   };
 
-  const mockProducts = [
-    {
-      id: "1",
-      title: "Elegant Purple Gradient Dress - Summer Collection",
-      price: 129.99,
-      image: dressImage,
-      url: "https://example.com",
-      inStock: true,
-      priceChange: -15,
-      brand: "Fashion Co.",
-    },
-    {
-      id: "2",
-      title: "Classic White Sneakers - Premium Leather",
-      price: 89.99,
-      image: shoesImage,
-      url: "https://example.com",
-      inStock: true,
-      priceChange: 5,
-      brand: "Footwear Brand",
-    },
-    {
-      id: "3",
-      title: "Luxury Pink Handbag - Designer Collection",
-      price: 299.99,
-      image: bagImage,
-      url: "https://example.com",
-      inStock: false,
-      brand: "Luxury Bags",
-    },
-    {
-      id: "4",
-      title: "Signature Perfume - Floral Notes",
-      price: 79.99,
-      image: perfumeImage,
-      url: "https://example.com",
-      inStock: true,
-      brand: "Fragrance House",
-    },
-  ];
+  const products = wishlistItems.map(item => ({
+    id: item.id,
+    title: item.title,
+    price: typeof item.price === 'string' ? parseFloat(item.price) : Number(item.price),
+    image: item.images[0] || "",
+    url: item.url,
+    inStock: item.inStock,
+    priceChange: calculatePriceChange(item),
+    brand: item.brand || undefined,
+  }));
 
-  const mockActivity = [
-    {
-      id: "1",
-      type: "price_drop" as const,
-      productTitle: "Elegant Purple Gradient Dress",
-      productImage: dressImage,
-      oldPrice: 152.99,
-      newPrice: 129.99,
-      priceChange: -15,
-      timestamp: "2 hours ago",
-    },
-    {
-      id: "2",
-      type: "price_increase" as const,
-      productTitle: "Classic White Sneakers",
-      productImage: shoesImage,
-      oldPrice: 85.99,
-      newPrice: 89.99,
-      priceChange: 5,
-      timestamp: "5 hours ago",
-    },
-    {
-      id: "3",
-      type: "restock" as const,
-      productTitle: "Signature Perfume",
-      productImage: perfumeImage,
-      timestamp: "1 day ago",
-    },
-  ];
+  const activityFeed = getActivityFeed(wishlistItems);
 
   return (
     <div className="h-full overflow-auto">
@@ -107,11 +107,11 @@ export default function Home() {
             <Button
               variant="outline"
               onClick={handleUpdateAll}
-              disabled={isUpdating}
+              disabled={updatePricesMutation.isPending}
               className="rounded-xl hover-elevate"
               data-testid="button-update-all"
             >
-              <RefreshCw className={`h-4 w-4 mr-2 ${isUpdating ? "animate-spin" : ""}`} />
+              <RefreshCw className={`h-4 w-4 mr-2 ${updatePricesMutation.isPending ? "animate-spin" : ""}`} />
               Update All Prices
             </Button>
             <Button
@@ -136,18 +136,43 @@ export default function Home() {
           </TabsList>
 
           <TabsContent value="grid" className="mt-6">
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-              {mockProducts.map((product) => (
-                <ProductCard key={product.id} {...product} />
-              ))}
-            </div>
+            {error ? (
+              <div className="text-center py-12">
+                <p className="text-destructive mb-2">Failed to load wishlist</p>
+                <p className="text-muted-foreground text-sm">{error instanceof Error ? error.message : "Unknown error"}</p>
+              </div>
+            ) : isLoading ? (
+              <div className="text-center py-12">
+                <p className="text-muted-foreground">Loading wishlist items...</p>
+              </div>
+            ) : products.length === 0 ? (
+              <div className="text-center py-12">
+                <p className="text-muted-foreground mb-4">Your wishlist is empty</p>
+                <Button onClick={() => setIsAddModalOpen(true)} className="gradient-bg">
+                  <Plus className="h-4 w-4 mr-2" />
+                  Add Your First Item
+                </Button>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+                {products.map((product) => (
+                  <ProductCard key={product.id} {...product} />
+                ))}
+              </div>
+            )}
           </TabsContent>
 
           <TabsContent value="activity" className="mt-6">
             <div className="max-w-3xl space-y-4">
-              {mockActivity.map((item) => (
-                <ActivityFeedItem key={item.id} {...item} />
-              ))}
+              {activityFeed.length === 0 ? (
+                <div className="text-center py-12">
+                  <p className="text-muted-foreground">No recent activity</p>
+                </div>
+              ) : (
+                activityFeed.map((item) => (
+                  <ActivityFeedItem key={item.id} {...item} />
+                ))
+              )}
             </div>
           </TabsContent>
         </Tabs>

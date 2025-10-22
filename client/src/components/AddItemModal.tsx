@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { X, Plus, Loader2 } from "lucide-react";
 import {
   Dialog,
@@ -11,6 +12,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ProductGallery } from "@/components/ProductGallery";
+import { scrapeProduct, addWishlistItem } from "@/lib/api";
+import { useToast } from "@/hooks/use-toast";
 
 interface AddItemModalProps {
   open: boolean;
@@ -19,37 +22,53 @@ interface AddItemModalProps {
 
 export function AddItemModal({ open, onOpenChange }: AddItemModalProps) {
   const [url, setUrl] = useState("");
-  const [isLoading, setIsLoading] = useState(false);
   const [preview, setPreview] = useState<any>(null);
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+
+  const scrapeMutation = useMutation({
+    mutationFn: scrapeProduct,
+    onSuccess: (data) => {
+      setPreview(data);
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to fetch product details",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const addMutation = useMutation({
+    mutationFn: addWishlistItem,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["wishlist"] });
+      toast({
+        title: "Success",
+        description: "Item added to wishlist",
+      });
+      onOpenChange(false);
+      setUrl("");
+      setPreview(null);
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to add item to wishlist",
+        variant: "destructive",
+      });
+    },
+  });
 
   const handleFetchPreview = () => {
     if (!url) return;
-    setIsLoading(true);
-    console.log("Fetching preview for:", url);
-    
-    setTimeout(() => {
-      setPreview({
-        title: "Example Product Name - Purple Gradient Dress",
-        price: 129.99,
-        currency: "$",
-        images: [
-          "https://images.unsplash.com/photo-1595777457583-95e059d581b8?w=400",
-          "https://images.unsplash.com/photo-1596783074918-c84cb06531ca?w=400",
-        ],
-        colors: ["Purple", "Blue", "Pink"],
-        sizes: ["XS", "S", "M", "L", "XL"],
-        brand: "Fashion Brand",
-        inStock: true,
-      });
-      setIsLoading(false);
-    }, 1500);
+    scrapeMutation.mutate(url);
   };
 
   const handleAdd = () => {
-    console.log("Adding item to wishlist");
-    onOpenChange(false);
-    setUrl("");
-    setPreview(null);
+    if (!url) return;
+    addMutation.mutate({ url });
   };
 
   return (
@@ -79,11 +98,11 @@ export function AddItemModal({ open, onOpenChange }: AddItemModalProps) {
               />
               <Button
                 onClick={handleFetchPreview}
-                disabled={!url || isLoading}
+                disabled={!url || scrapeMutation.isPending}
                 className="rounded-xl gradient-bg"
                 data-testid="button-fetch-preview"
               >
-                {isLoading ? (
+                {scrapeMutation.isPending ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
                 ) : (
                   "Fetch"
@@ -159,10 +178,15 @@ export function AddItemModal({ open, onOpenChange }: AddItemModalProps) {
                 </Button>
                 <Button
                   onClick={handleAdd}
+                  disabled={addMutation.isPending}
                   className="rounded-xl gradient-bg"
                   data-testid="button-confirm-add"
                 >
-                  <Plus className="h-4 w-4 mr-2" />
+                  {addMutation.isPending ? (
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  ) : (
+                    <Plus className="h-4 w-4 mr-2" />
+                  )}
                   Add to Wishlist
                 </Button>
               </div>
