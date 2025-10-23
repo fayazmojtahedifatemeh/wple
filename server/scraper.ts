@@ -18,8 +18,9 @@ interface SiteExtractor {
   extractPrice($: cheerio.CheerioAPI): { price: number; currency: string } | null;
   extractImages($: cheerio.CheerioAPI, baseUrl: string): string[];
   extractBrand?($: cheerio.CheerioAPI): string | undefined;
-  extractColors?($: cheerio.CheerioAPI): string[];
-  extractSizes?($: cheerio.CheerioAPI): string[];
+  extractColors?($: cheerio.CheerioAPI): Array<{name: string; swatch?: string; available?: boolean}>;
+  extractSizes?($: cheerio.CheerioAPI): Array<{name: string; available?: boolean}>;
+  needsPuppeteer?: boolean;
 }
 
 function cleanText(text: string | undefined): string {
@@ -29,17 +30,52 @@ function cleanText(text: string | undefined): string {
 
 function parsePrice(priceText: string): number {
   const cleaned = priceText.replace(/[^\d.,]/g, '');
-  const priceMatch = cleaned.match(/[\d,]+\.?\d*/);
-  return priceMatch ? parseFloat(priceMatch[0].replace(/,/g, '')) : 0;
+  const hasCommaDecimal = /\d+,\d{2}$/.test(cleaned);
+  
+  if (hasCommaDecimal) {
+    return parseFloat(cleaned.replace(/\./g, '').replace(',', '.'));
+  } else {
+    return parseFloat(cleaned.replace(/,/g, ''));
+  }
 }
 
-function detectCurrency(text: string): string {
-  if (text.includes('£') || text.includes('GBP')) return '£';
-  if (text.includes('€') || text.includes('EUR')) return '€';
-  if (text.includes('$') || text.includes('USD')) return '$';
-  if (text.includes('¥') || text.includes('JPY') || text.includes('CNY')) return '¥';
-  if (text.includes('₹') || text.includes('INR')) return '₹';
+function detectCurrency(text: string, url?: string): string {
+  if (text.includes('£') || text.toUpperCase().includes('GBP')) return '£';
+  if (text.includes('€') || text.toUpperCase().includes('EUR')) return '€';
+  if (text.includes('¥') || text.toUpperCase().includes('JPY') || text.toUpperCase().includes('CNY')) return '¥';
+  if (text.includes('₹') || text.toUpperCase().includes('INR')) return '₹';
+  if (text.includes('A$') || text.toUpperCase().includes('AUD')) return 'A$';
+  if (text.includes('C$') || text.toUpperCase().includes('CAD')) return 'C$';
+  
+  if (url) {
+    const hostname = url.toLowerCase();
+    if (hostname.includes('.uk') || hostname.includes('/uk/') || hostname.includes('/gb/')) return '£';
+    if (hostname.includes('.eu') || hostname.includes('/eu/') || hostname.includes('/de/') || hostname.includes('/fr/') || hostname.includes('/es/') || hostname.includes('/it/')) return '€';
+    if (hostname.includes('.jp') || hostname.includes('/jp/')) return '¥';
+    if (hostname.includes('.in') || hostname.includes('/in/')) return '₹';
+    if (hostname.includes('.au') || hostname.includes('/au/')) return 'A$';
+    if (hostname.includes('.ca') || hostname.includes('/ca/')) return 'C$';
+    if (hostname.includes('.cn') || hostname.includes('/cn/')) return '¥';
+  }
+  
+  if (text.includes('$')) return '$';
+  
   return '$';
+}
+
+function getCurrencySymbol(code: string): string {
+  const currencyMap: Record<string, string> = {
+    USD: '$',
+    EUR: '€',
+    GBP: '£',
+    JPY: '¥',
+    CNY: '¥',
+    INR: '₹',
+    CAD: 'C$',
+    AUD: 'A$',
+  };
+
+  return currencyMap[code.toUpperCase()] || code;
 }
 
 function parseSrcset(srcset: string): string {
@@ -48,18 +84,20 @@ function parseSrcset(srcset: string): string {
   return largest.split(' ')[0];
 }
 
-// Site-specific extractors
-
 const aymStudioExtractor: SiteExtractor = {
   extractTitle($) {
     return cleanText($('h1.product-title').text()) || null;
   },
   extractPrice($) {
-    const priceText = cleanText($('price-list sale-price').text());
+    const priceText = cleanText($('price-list sale-price, price-list regular-price').text());
     if (!priceText) return null;
+    
+    const currencyMeta = $('meta[property="og:price:currency"]').attr('content');
+    let currency = currencyMeta ? getCurrencySymbol(currencyMeta) : detectCurrency(priceText);
+    
     return {
       price: parsePrice(priceText),
-      currency: detectCurrency(priceText),
+      currency: currency,
     };
   },
   extractImages($, baseUrl) {
@@ -76,26 +114,42 @@ const aymStudioExtractor: SiteExtractor = {
     return images.slice(0, 5);
   },
   extractColors($) {
-    const colors: string[] = [];
+    const colors: Array<{name: string; swatch?: string; available?: boolean}> = [];
     $('fieldset').each((_, fieldset) => {
       const legend = $(fieldset).find('legend').text();
       if (legend.includes('Colour')) {
-        $(fieldset).find('label.color-swatch span').each((_, el) => {
-          const color = cleanText($(el).text());
-          if (color) colors.push(color);
+        $(fieldset).find('label.color-swatch').each((_, el) => {
+          const colorName = cleanText($(el).find('span').text());
+          const swatchImg = $(el).find('img').attr('src');
+          const isDisabled = $(el).hasClass('is-disabled');
+          
+          if (colorName) {
+            colors.push({
+              name: colorName,
+              swatch: swatchImg,
+              available: !isDisabled
+            });
+          }
         });
       }
     });
     return colors;
   },
   extractSizes($) {
-    const sizes: string[] = [];
+    const sizes: Array<{name: string; available?: boolean}> = [];
     $('fieldset').each((_, fieldset) => {
       const legend = $(fieldset).find('legend').text();
       if (legend.includes('Size')) {
-        $(fieldset).find('label.block-swatch span').each((_, el) => {
-          const size = cleanText($(el).text());
-          if (size) sizes.push(size);
+        $(fieldset).find('label.block-swatch').each((_, el) => {
+          const sizeName = cleanText($(el).find('span').text());
+          const isDisabled = $(el).hasClass('is-disabled');
+          
+          if (sizeName) {
+            sizes.push({
+              name: sizeName,
+              available: !isDisabled
+            });
+          }
         });
       }
     });
@@ -110,9 +164,13 @@ const gianaWorldExtractor: SiteExtractor = {
   extractPrice($) {
     const priceText = cleanText($('price-list sale-price, price-list regular-price').text());
     if (!priceText) return null;
+    
+    const currencyMeta = $('meta[property="og:price:currency"]').attr('content');
+    let currency = currencyMeta ? getCurrencySymbol(currencyMeta) : detectCurrency(priceText);
+    
     return {
       price: parsePrice(priceText),
-      currency: detectCurrency(priceText),
+      currency: currency,
     };
   },
   extractImages($, baseUrl) {
@@ -129,26 +187,42 @@ const gianaWorldExtractor: SiteExtractor = {
     return images.slice(0, 5);
   },
   extractColors($) {
-    const colors: string[] = [];
+    const colors: Array<{name: string; swatch?: string; available?: boolean}> = [];
     $('fieldset').each((_, fieldset) => {
       const legend = $(fieldset).find('legend').text();
       if (legend.toLowerCase().includes('colour') || legend.toLowerCase().includes('color')) {
-        $(fieldset).find('label span').each((_, el) => {
-          const color = cleanText($(el).text());
-          if (color && !color.includes('Color')) colors.push(color);
+        $(fieldset).find('label').each((_, el) => {
+          const colorName = cleanText($(el).find('span').not('.visually-hidden').text());
+          const swatchImg = $(el).find('img, [style*="background"]').attr('src');
+          const isDisabled = $(el).hasClass('is-disabled') || $(el).parent().hasClass('is-disabled');
+          
+          if (colorName && !colorName.toLowerCase().includes('color')) {
+            colors.push({
+              name: colorName,
+              swatch: swatchImg,
+              available: !isDisabled
+            });
+          }
         });
       }
     });
     return colors;
   },
   extractSizes($) {
-    const sizes: string[] = [];
+    const sizes: Array<{name: string; available?: boolean}> = [];
     $('fieldset').each((_, fieldset) => {
       const legend = $(fieldset).find('legend').text();
       if (legend.toLowerCase().includes('size')) {
-        $(fieldset).find('label span').each((_, el) => {
-          const size = cleanText($(el).text());
-          if (size && !size.includes('Size')) sizes.push(size);
+        $(fieldset).find('label').each((_, el) => {
+          const sizeName = cleanText($(el).find('span').not('.visually-hidden').text());
+          const isDisabled = $(el).hasClass('is-disabled') || $(el).parent().hasClass('is-disabled');
+          
+          if (sizeName && !sizeName.toLowerCase().includes('size')) {
+            sizes.push({
+              name: sizeName,
+              available: !isDisabled
+            });
+          }
         });
       }
     });
@@ -157,6 +231,7 @@ const gianaWorldExtractor: SiteExtractor = {
 };
 
 const zaraExtractor: SiteExtractor = {
+  needsPuppeteer: true,
   extractTitle($) {
     let title = cleanText($('h1.product-detail-card-info__title span.product-detail-card-info__name').text());
     if (!title) title = cleanText($('span[data-qa-qualifier="product-detail-info-name"]').text());
@@ -184,16 +259,22 @@ const zaraExtractor: SiteExtractor = {
     return images.slice(0, 5);
   },
   extractColors($) {
-    const colors: string[] = [];
+    const colors: Array<{name: string; swatch?: string; available?: boolean}> = [];
     $('ul.product-detail-color-selector__colors li.product-detail-color-item').each((_, el) => {
-      const color = cleanText($(el).find('span.screen-reader-text').text());
-      if (color) colors.push(color);
+      const colorName = cleanText($(el).find('span.screen-reader-text').text());
+      if (colorName) {
+        colors.push({
+          name: colorName,
+          available: true
+        });
+      }
     });
     return colors;
   },
 };
 
 const hmExtractor: SiteExtractor = {
+  needsPuppeteer: true,
   extractTitle($) {
     const jsonSchema = $('script#product-schema').html();
     if (jsonSchema) {
@@ -212,7 +293,7 @@ const hmExtractor: SiteExtractor = {
         if (data.offers?.price) {
           return {
             price: parseFloat(data.offers.price),
-            currency: detectCurrency(data.offers.priceCurrency || '$'),
+            currency: getCurrencySymbol(data.offers.priceCurrency || '$'),
           };
         }
       } catch (e) {}
@@ -237,29 +318,45 @@ const hmExtractor: SiteExtractor = {
     return [];
   },
   extractColors($) {
-    const colors: string[] = [];
+    const colors: Array<{name: string; swatch?: string; available?: boolean}> = [];
     $('div[data-testid="color-selector-wrapper"] a[role="radio"]').each((_, el) => {
-      const color = $(el).attr('title');
-      if (color) colors.push(cleanText(color));
+      const colorName = $(el).attr('title');
+      const swatchImg = $(el).find('img').attr('src');
+      if (colorName) {
+        colors.push({
+          name: cleanText(colorName),
+          swatch: swatchImg,
+          available: true
+        });
+      }
     });
     return colors;
   },
   extractSizes($) {
-    const sizes: string[] = [];
+    const sizes: Array<{name: string; available?: boolean}> = [];
     $('div[data-testid="size-selector"] ul[data-testid="grid"] div[role="radio"]').each((_, el) => {
-      const size = cleanText($(el).find('div').text());
-      if (size) sizes.push(size);
+      const sizeName = cleanText($(el).find('div').first().text());
+      const ariaLabel = $(el).attr('aria-label') || '';
+      const isAvailable = !ariaLabel.toLowerCase().includes('out of stock');
+      
+      if (sizeName) {
+        sizes.push({
+          name: sizeName,
+          available: isAvailable
+        });
+      }
     });
     return sizes;
   },
 };
 
 const farfetchExtractor: SiteExtractor = {
+  needsPuppeteer: true,
   extractTitle($) {
     return cleanText($('p[data-testid="product-short-description"]').text()) || null;
   },
   extractBrand($) {
-    return cleanText($('h1.ltr-i980jo a.ltr-1rkeqir-Body-Heading').text());
+    return cleanText($('h1.ltr-i980jo a.ltr-1rkeqir-Body-Heading, a[data-component="DesignerName"]').text());
   },
   extractPrice($) {
     const priceText = cleanText($('p[data-component="PriceLarge"]').text());
@@ -271,7 +368,7 @@ const farfetchExtractor: SiteExtractor = {
   },
   extractImages($, baseUrl) {
     const images: string[] = [];
-    $('div.ltr-1kklpjs button.ltr-1c58b5g img').each((_, el) => {
+    $('div.ltr-1kklpjs button.ltr-1c58b5g img, [data-testid="product-image"] img').each((_, el) => {
       const src = $(el).attr('src');
       if (src && src.startsWith('http')) images.push(src);
     });
@@ -335,11 +432,17 @@ const mytheresaExtractor: SiteExtractor = {
     return images.slice(0, 5);
   },
   extractSizes($) {
-    const sizes: string[] = [];
+    const sizes: Array<{name: string; available?: boolean}> = [];
     $('div.dropdown__options__wrapper div.sizeitem').each((_, el) => {
       if (!$(el).hasClass('sizeitem--placeholder')) {
-        const size = cleanText($(el).find('span.sizeitem__label').text());
-        if (size) sizes.push(size);
+        const sizeName = cleanText($(el).find('span.sizeitem__label').text());
+        const isAvailable = !$(el).hasClass('sizeitem--notavailable');
+        if (sizeName) {
+          sizes.push({
+            name: sizeName,
+            available: isAvailable
+          });
+        }
       }
     });
     return sizes;
@@ -370,18 +473,30 @@ const yooxExtractor: SiteExtractor = {
     return images.slice(0, 5);
   },
   extractColors($) {
-    const colors: string[] = [];
+    const colors: Array<{name: string; swatch?: string; available?: boolean}> = [];
     $('div.ColorPicker_color-picker__VS_Ec a.ColorPicker_color-elem__KV09t').each((_, el) => {
-      const color = $(el).find('div.ColorPicker_color-sample__yS_FM').attr('title');
-      if (color) colors.push(cleanText(color));
+      const colorName = $(el).find('div.ColorPicker_color-sample__yS_FM').attr('title');
+      const isDisabled = $(el).parent().hasClass('SizePicker_disabled__ma4Lp');
+      if (colorName) {
+        colors.push({
+          name: cleanText(colorName),
+          available: !isDisabled
+        });
+      }
     });
     return colors;
   },
   extractSizes($) {
-    const sizes: string[] = [];
+    const sizes: Array<{name: string; available?: boolean}> = [];
     $('div[data-ta="size-picker"] div.SizePicker_size-item__nL4z_').each((_, el) => {
-      const size = cleanText($(el).find('span.SizePicker_size-title__LucnR').text());
-      if (size) sizes.push(size);
+      const sizeName = cleanText($(el).find('span.SizePicker_size-title__LucnR').text());
+      const isDisabled = $(el).hasClass('SizePicker_disabled__ma4Lp');
+      if (sizeName) {
+        sizes.push({
+          name: sizeName,
+          available: !isDisabled
+        });
+      }
     });
     return sizes;
   },
@@ -404,6 +519,15 @@ function getExtractorForSite(url: string): SiteExtractor | null {
 
 export async function scrapeProductFromUrl(url: string): Promise<ScrapedProduct> {
   try {
+    const siteExtractor = getExtractorForSite(url);
+    
+    // Check if site needs Puppeteer
+    if (siteExtractor?.needsPuppeteer) {
+      console.log('[Scraper] Site requires Puppeteer, delegating...');
+      const { scrapeWithPuppeteer } = await import('./puppeteer-scraper');
+      return await scrapeWithPuppeteer(url);
+    }
+    
     const response = await axios.get(url, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -423,14 +547,12 @@ export async function scrapeProductFromUrl(url: string): Promise<ScrapedProduct>
     const html = response.data;
     const $ = cheerio.load(html);
 
-    const siteExtractor = getExtractorForSite(url);
-
     let title: string | null = null;
     let priceData: { price: number; currency: string } | null = null;
     let images: string[] = [];
     let brand: string | undefined;
-    let colors: string[] | undefined;
-    let sizes: string[] | undefined;
+    let colors: Array<{name: string; swatch?: string; available?: boolean}> | undefined;
+    let sizes: Array<{name: string; available?: boolean}> | undefined;
 
     if (siteExtractor) {
       title = siteExtractor.extractTitle($);
@@ -445,7 +567,7 @@ export async function scrapeProductFromUrl(url: string): Promise<ScrapedProduct>
       title = fallbackExtractTitle($);
     }
     if (!priceData) {
-      priceData = fallbackExtractPrice($);
+      priceData = fallbackExtractPrice($, url);
     }
     if (images.length === 0) {
       images = fallbackExtractImages($, url);
@@ -460,8 +582,12 @@ export async function scrapeProductFromUrl(url: string): Promise<ScrapedProduct>
 
     if (!priceData || priceData.price === 0) {
       console.warn('[Scraper] Warning: Could not extract price for', url);
-      priceData = { price: 0, currency: '$' };
+      priceData = { price: 0, currency: detectCurrency('', url) };
     }
+
+    // Convert color/size objects to simple string arrays for storage
+    const colorStrings = colors?.map(c => c.name);
+    const sizeStrings = sizes?.map(s => s.name);
 
     return {
       title,
@@ -470,8 +596,8 @@ export async function scrapeProductFromUrl(url: string): Promise<ScrapedProduct>
       images: images.length > 0 ? images : ['https://via.placeholder.com/400'],
       brand,
       inStock: true,
-      colors,
-      sizes,
+      colors: colorStrings,
+      sizes: sizeStrings,
       url,
     };
   } catch (error) {
@@ -488,7 +614,7 @@ export async function scrapeProductFromUrl(url: string): Promise<ScrapedProduct>
     }
     
     console.error('[Scraper] Error scraping product:', error);
-    throw new Error(`Failed to scrape product: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    throw error;
   }
 }
 
@@ -524,9 +650,17 @@ function fallbackExtractTitle($: cheerio.CheerioAPI): string {
   return 'Untitled Product';
 }
 
-function fallbackExtractPrice($: cheerio.CheerioAPI): { price: number; currency: string } {
+function fallbackExtractPrice($: cheerio.CheerioAPI, url: string): { price: number; currency: string } {
   let priceText = '';
   let currency = '$';
+
+  const currencyElement = $('meta[property="og:price:currency"]');
+  if (currencyElement.length) {
+    const currencyCode = currencyElement.attr('content');
+    if (currencyCode) {
+      currency = getCurrencySymbol(currencyCode);
+    }
+  }
 
   const selectors = [
     'meta[property="og:price:amount"]',
@@ -551,15 +685,9 @@ function fallbackExtractPrice($: cheerio.CheerioAPI): { price: number; currency:
     }
   }
 
-  const currencyElement = $('meta[property="og:price:currency"]');
-  if (currencyElement.length) {
-    const currencyCode = currencyElement.attr('content');
-    if (currencyCode) {
-      currency = getCurrencySymbol(currencyCode);
-    }
+  if (!currencyElement.length) {
+    currency = detectCurrency(priceText, url);
   }
-
-  currency = detectCurrency(priceText);
 
   const price = parsePrice(priceText);
 
@@ -635,19 +763,4 @@ function fallbackExtractBrand($: cheerio.CheerioAPI): string | undefined {
   }
 
   return undefined;
-}
-
-function getCurrencySymbol(code: string): string {
-  const currencyMap: Record<string, string> = {
-    USD: '$',
-    EUR: '€',
-    GBP: '£',
-    JPY: '¥',
-    CNY: '¥',
-    INR: '₹',
-    CAD: 'C$',
-    AUD: 'A$',
-  };
-
-  return currencyMap[code.toUpperCase()] || code;
 }
