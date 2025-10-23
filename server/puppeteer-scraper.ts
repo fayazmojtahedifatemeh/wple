@@ -122,6 +122,8 @@ async function extractZaraProduct($: any, url: string): Promise<ScrapedProduct> 
   let title = cleanText($('h1.product-detail-card-info__title span.product-detail-card-info__name').text());
   if (!title) title = cleanText($('span[data-qa-qualifier="product-detail-info-name"]').text());
   
+  const brand = 'ZARA';
+  
   const priceText = cleanText($('span[data-qa-qualifier="price-amount-current"] span.money-amount__main').text());
   const price = parseFloat(priceText.replace(/[^\d.,]/g, '').replace(/,/g, ''));
   const currency = detectCurrency(priceText, url);
@@ -141,14 +143,25 @@ async function extractZaraProduct($: any, url: string): Promise<ScrapedProduct> 
     if (colorName) colors.push(colorName);
   });
   
+  const sizes: string[] = [];
+  $('div[data-qa-qualifier="size-selector"] button[data-qa-action="size-selector-button"]').each((_: any, el: any) => {
+    const sizeName = cleanText($(el).find('span').text());
+    if (sizeName && !sizeName.toLowerCase().includes('size guide')) {
+      sizes.push(sizeName);
+    }
+  });
+  
+  console.log('[Puppeteer-Zara] Extracted:', { title, brand, colors: colors.length, sizes: sizes.length });
+  
   return {
     title: title || 'Unknown Product',
+    brand,
     price,
     currency,
     images: images.slice(0, 5),
     inStock: true,
     colors: colors.length > 0 ? colors : undefined,
-    sizes: undefined,
+    sizes: sizes.length > 0 ? sizes : undefined,
     url
   };
 }
@@ -158,6 +171,7 @@ async function extractHMProduct($: any, url: string): Promise<ScrapedProduct> {
   
   const jsonSchema = $('script#product-schema').html();
   let title = '';
+  let brand = 'H&M';
   let price = 0;
   let currency = '$';
   let images: string[] = [];
@@ -166,13 +180,14 @@ async function extractHMProduct($: any, url: string): Promise<ScrapedProduct> {
     try {
       const data = JSON.parse(jsonSchema);
       title = data.name || '';
+      brand = data.brand?.name || 'H&M';
       price = parseFloat(data.offers?.price || '0');
       currency = data.offers?.priceCurrency || '$';
       if (Array.isArray(data.image)) {
         images = data.image.slice(0, 5);
       }
     } catch (e) {
-      console.error('[Puppeteer] Failed to parse H&M JSON schema');
+      console.error('[Puppeteer-HM] Failed to parse JSON schema:', e);
     }
   }
   
@@ -198,8 +213,11 @@ async function extractHMProduct($: any, url: string): Promise<ScrapedProduct> {
     if (sizeName) sizes.push(sizeName);
   });
   
+  console.log('[Puppeteer-HM] Extracted:', { title, brand, colors: colors.length, sizes: sizes.length });
+  
   return {
     title: title || 'Unknown Product',
+    brand,
     price,
     currency,
     images: images.length > 0 ? images : ['https://via.placeholder.com/400'],
@@ -226,11 +244,20 @@ async function extractFarfetchProduct($: any, url: string, page: any): Promise<S
     if (src && src.startsWith('http')) images.push(src);
   });
   
+  const colors: string[] = [];
+  $('div[data-testid="ColorSelector"] button, div[data-component="ColorSelector"] button').each((_: any, el: any) => {
+    const colorName = cleanText($(el).attr('aria-label') || $(el).attr('title') || '');
+    if (colorName && !colorName.toLowerCase().includes('select')) {
+      colors.push(colorName);
+    }
+  });
+  
   const sizes: string[] = [];
-  const sizeSelector = $('div[data-testid="ScaledSizeSelector"]');
+  const sizeSelector = $('div[data-testid="ScaledSizeSelector"], div[data-component="SizeSelector"]');
   if (sizeSelector.length) {
     try {
-      const dropdownButton = await page.$('div[data-testid="ScaledSizeSelector"] div.ltr-1aksjyr');
+      console.log('[Puppeteer-Farfetch] Attempting to extract sizes...');
+      const dropdownButton = await page.$('div[data-testid="ScaledSizeSelector"] div.ltr-1aksjyr, div[data-component="SizeSelector"] button');
       if (dropdownButton) {
         await dropdownButton.click();
         await page.waitForTimeout(1000);
@@ -238,15 +265,22 @@ async function extractFarfetchProduct($: any, url: string, page: any): Promise<S
         const newHtml = await page.content();
         const $new = (await import('cheerio')).load(newHtml);
         
-        $new('[data-testid="SizeOption"]').each((_: any, el: any) => {
+        $new('[data-testid="SizeOption"], [data-component="SizeOption"]').each((_: any, el: any) => {
           const sizeName = cleanText($new(el).text());
           if (sizeName) sizes.push(sizeName);
         });
+        console.log('[Puppeteer-Farfetch] Extracted sizes:', sizes.length);
+      } else {
+        console.log('[Puppeteer-Farfetch] Size dropdown button not found');
       }
     } catch (e) {
-      console.log('[Puppeteer] Could not extract Farfetch sizes');
+      console.log('[Puppeteer-Farfetch] Could not extract sizes:', e instanceof Error ? e.message : 'Unknown error');
     }
+  } else {
+    console.log('[Puppeteer-Farfetch] Size selector not found in page');
   }
+  
+  console.log('[Puppeteer-Farfetch] Extracted:', { title, brand, colors: colors.length, sizes: sizes.length });
   
   return {
     title: title || 'Unknown Product',
@@ -255,7 +289,7 @@ async function extractFarfetchProduct($: any, url: string, page: any): Promise<S
     currency,
     images: images.slice(0, 5),
     inStock: true,
-    colors: undefined,
+    colors: colors.length > 0 ? colors : undefined,
     sizes: sizes.length > 0 ? sizes : undefined,
     url
   };
