@@ -1,0 +1,119 @@
+# Wishlist App - Installation & Fix Guide
+
+## Step 1: Install Puppeteer
+
+Add Puppeteer to your project dependencies:
+
+```bash
+npm install puppeteer
+```
+
+**For Replit specifically**, you'll also need to install Chromium dependencies. Add this to your `.replit` file:
+
+```toml
+[nix]
+channel = "stable-23_11"
+
+[deployment]
+run = ["sh", "-c", "npm run start"]
+
+[[ports]]
+localPort = 5000
+externalPort = 80
+```
+
+And update your `replit.nix`:
+
+```nix
+{ pkgs }: {
+  deps = [
+    pkgs.nodejs-18_x
+    pkgs.nodePackages.typescript
+    pkgs.nodePackages.typescript-language-server
+    pkgs.postgresql
+    pkgs.chromium
+    pkgs.nss
+    pkgs.freetype
+    pkgs.harfbuzz
+    pkgs.ttf_bitstream_vera
+  ];
+}
+```
+
+## Step 2: Update Your Files
+
+### A) Replace `server/scraper.ts`
+
+Replace your entire `server/scraper.ts` file with the enhanced version from Artifact `scraper_enhanced`.
+
+### B) Create `server/puppeteer-scraper.ts`
+
+Create a new file `server/puppeteer-scraper.ts` and paste the content from Artifact `puppeteer_scraper`.
+
+### C) Update `server/routes.ts`
+
+Replace your `server/routes.ts` with the enhanced version from Artifact `routes_enhanced`.
+
+### D) Update `server/scraper.ts` to integrate Puppeteer
+
+Add this at the top of your scraper.ts (after imports):
+
+```typescript
+// Check if Puppeteer is available
+let puppeteerAvailable = false;
+try {
+  await import('puppeteer');
+  puppeteerAvailable = true;
+} catch {
+  console.warn('[Scraper] Puppeteer not available - JS-heavy sites will fail');
+}
+```
+
+Then modify the `scrapeProductFromUrl` function to call Puppeteer when needed:
+
+```typescript
+export async function scrapeProductFromUrl(url: string): Promise<ScrapedProduct> {
+  try {
+    const siteExtractor = getExtractorForSite(url);
+    
+    // Check if site needs Puppeteer and if it's available
+    if (siteExtractor?.needsPuppeteer) {
+      if (puppeteerAvailable) {
+        const { scrapeWithPuppeteer } = await import('./puppeteer-scraper');
+        return await scrapeWithPuppeteer(url);
+      } else {
+        throw new Error('This site requires JavaScript rendering. Please install Puppeteer: npm install puppeteer');
+      }
+    }
+    
+    // ... rest of your existing code
+```
+
+## Step 3: Fix Currency Detection
+
+The currency detection is now improved in the enhanced scraper. Key fixes:
+
+1. **Checks meta tags first** for currency codes
+2. **Analyzes URL** for region hints (.uk, /uk/, /gb/ → £)
+3. **Falls back to text parsing** if needed
+
+## Step 4: Fix Schema Issues
+
+Your schema looks mostly correct, but ensure colors and sizes are stored as simple string arrays:
+
+In `server/storage.ts`, when creating items, make sure to flatten color/size objects:
+
+```typescript
+// In your createWishlistItem function
+const itemToInsert = {
+  ...item,
+  colors: item.colors?.map(c => typeof c === 'string' ? c : c.name) || [],
+  sizes: item.sizes?.map(s => typeof s === 'string' ? s : s.name) || [],
+};
+```
+
+## Step 5: Test the Fixes
+
+### Test 1: AYM Studio (Currency Fix)
+```
+URL: https://www.aym-
