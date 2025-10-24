@@ -109,11 +109,10 @@ export function ProductCard({
 
   return (
     <Card
-      className={`group relative overflow-hidden rounded-2xl glass hover-elevate transition-all duration-200 ${
-        // Added relative positioning
+      className={`group relative overflow-hidden rounded-2xl glass floating hover-elevate transition-all duration-300 animate-fade-in ${
         !inStock ? "opacity-60" : ""
       }`}
-      data-testid={`card-product-${id}`} // Add ID for testing
+      data-testid={`card-product-${id}`}
     >
       <div className="relative aspect-[3/4] overflow-hidden">
         <img
@@ -139,15 +138,15 @@ export function ProductCard({
         )}
 
         {/* Action Buttons Container */}
-        <div className="absolute top-3 right-3 flex flex-col gap-2 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+        <div className="absolute top-3 right-3 flex flex-col gap-2 opacity-0 group-hover:opacity-100 transition-all duration-300 animate-slide-up">
           {/* Update Price Button */}
           <Button
             size="icon"
             variant="secondary"
-            className="h-9 w-9 rounded-xl glass"
-            title="Update Price" // Tooltip text
+            className="h-9 w-9 rounded-xl glass-strong glow-button hover-elevate"
+            title="Update Price"
             onClick={handleUpdate}
-            disabled={updatePriceMutation.isPending} // Disable while updating
+            disabled={updatePriceMutation.isPending}
             data-testid="button-update-price"
           >
             {updatePriceMutation.isPending ? (
@@ -160,9 +159,9 @@ export function ProductCard({
           <Button
             size="icon"
             variant="secondary"
-            className="h-9 w-9 rounded-xl glass"
-            title="Visit Store Page" // Tooltip text
-            onClick={() => window.open(url, "_blank", "noopener noreferrer")} // Added security attributes
+            className="h-9 w-9 rounded-xl glass-strong glow-button hover-elevate"
+            title="Visit Store Page"
+            onClick={() => window.open(url, "_blank", "noopener noreferrer")}
             data-testid="button-open-url"
           >
             <ExternalLink className="h-4 w-4" />
@@ -176,9 +175,9 @@ export function ProductCard({
             <AlertDialogTrigger asChild>
               <Button
                 size="icon"
-                variant="destructive" // Destructive variant for delete
-                className="h-9 w-9 rounded-xl glass bg-destructive/80 hover:bg-destructive text-destructive-foreground" // Destructive styling
-                title="Delete Item" // Tooltip text
+                variant="destructive"
+                className="h-9 w-9 rounded-xl glass-strong glow-button hover-elevate bg-destructive/80 hover:bg-destructive text-destructive-foreground"
+                title="Delete Item"
                 data-testid="button-delete-trigger"
               >
                 <Trash2 className="h-4 w-4" />

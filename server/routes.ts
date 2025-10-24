@@ -29,6 +29,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // AI categorization endpoint
+  app.post("/api/categorize", async (req, res) => {
+    try {
+      const { title, brand, url } = req.body;
+      if (!title || typeof title !== "string") {
+        return res.status(400).json({ error: "Title is required" });
+      }
+
+      const categoryResult = await categorizeProduct(title, brand, url);
+      res.json(categoryResult);
+    } catch (error) {
+      console.error("Categorization error:", error);
+      const message =
+        error instanceof Error ? error.message : "Failed to categorize product";
+      res.status(500).json({ error: message });
+    }
+  });
+
   // Get all wishlist items
   app.get("/api/wishlist", async (req, res) => {
     // ... (no changes)

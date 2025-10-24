@@ -1,10 +1,11 @@
 import React, { useState, useMemo } from "react"; // Added React import
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Plus, RefreshCw, Activity } from "lucide-react"; // Removed LayoutGrid
+import { Plus, RefreshCw, Activity, Upload } from "lucide-react"; // Removed LayoutGrid
 import { Button } from "@/components/ui/button";
 import { ProductCard } from "@/components/ProductCard";
 import { ActivityFeedItem } from "@/components/ActivityFeedItem";
 import { AddItemModal } from "@/components/AddItemModal";
+import { CSVImportModal } from "@/components/CSVImportModal";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"; // Keep Tabs for Grid/Activity toggle
 import { fetchWishlistItems, updateAllPrices } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
@@ -140,6 +141,7 @@ function getActivityFeed(items: WishlistItem[]): ActivityItem[] {
 
 export default function Home() {
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [isCSVImportOpen, setIsCSVImportOpen] = useState(false);
   // FIX: State for selected category/subcategory
   // FIX: State for selected category/subcategory
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null); // null means "All Items"
@@ -286,23 +288,19 @@ export default function Home() {
   };
 
   return (
-    // FIX: Apply flex layout to the overall page container
-    <div className="flex h-screen w-full bg-gradient-to-br from-background via-background to-primary/5 overflow-hidden">
-      {" "}
-      {/* Added overflow-hidden */}
-      {/* Pass necessary props to the Sidebar */}
+    <div className="flex h-screen w-full bg-gradient-to-br from-background via-background to-primary/5 overflow-hidden relative">
+      {/* Animated background elements */}
+      <div className="absolute inset-0 bg-gradient-to-br from-purple-500/5 via-pink-500/5 to-blue-500/5 animate-pulse"></div>
+      <div className="absolute inset-0 bg-gradient-to-tr from-blue-500/3 via-purple-500/3 to-pink-500/3"></div>
+      
       <AppSidebar
         selectedCategory={selectedCategory}
         selectedSubcategory={selectedSubcategory}
         onSelectCategory={handleSelectCategory}
         categoryCounts={categoryCounts}
       />
-      {/* FIX: Make this the main scrollable container */}
-      <div className="flex flex-col flex-1 overflow-y-auto">
-        {" "}
-        {/* Added overflow-y-auto */}
-        {/* FIX: Make Header sticky */}
-        <header className="sticky top-0 z-10 flex items-center justify-between p-4 border-b border-border/50 glass backdrop-blur-xl">
+      <div className="flex flex-col flex-1 overflow-y-auto relative z-10 scrollbar-refined">
+        <header className="sticky top-0 z-20 flex items-center justify-between p-4 border-b border-border/50 glass-strong backdrop-blur-xl">
           {/* Removed SidebarTrigger */}
           <div className="flex-1">
             {/* Placeholder for potential breadcrumbs or search */}
@@ -313,7 +311,7 @@ export default function Home() {
               variant="outline"
               onClick={handleUpdateAll}
               disabled={updatePricesMutation.isPending}
-              className="rounded-xl hover-elevate text-xs md:text-sm"
+              className="rounded-xl hover-elevate glow-button text-xs md:text-sm glass-weak"
               data-testid="button-update-all"
             >
               <RefreshCw
@@ -321,10 +319,20 @@ export default function Home() {
               />
               Update All
             </Button>
+            {/* CSV Import Button */}
+            <Button
+              variant="outline"
+              onClick={() => setIsCSVImportOpen(true)}
+              className="rounded-xl hover-elevate glow-button text-xs md:text-sm glass-weak"
+              data-testid="button-csv-import"
+            >
+              <Upload className="h-3 w-3 md:h-4 md:w-4 mr-1 md:mr-2" />
+              Import CSV
+            </Button>
             {/* Add Item Button */}
             <Button
               onClick={() => setIsAddModalOpen(true)}
-              className="rounded-xl gradient-bg text-xs md:text-sm"
+              className="rounded-xl gradient-bg-animated glow-interactive text-xs md:text-sm hover-elevate"
               data-testid="button-add-item"
             >
               <Plus className="h-3 w-3 md:h-4 md:w-4 mr-1 md:mr-2" />
@@ -354,17 +362,17 @@ export default function Home() {
               onValueChange={setActiveTab}
               className="w-full"
             >
-              <TabsList className="rounded-xl glass max-w-sm">
+              <TabsList className="rounded-xl glass-strong max-w-sm animate-fade-in">
                 <TabsTrigger
                   value="grid"
-                  className="rounded-lg gap-1.5"
+                  className="rounded-lg gap-1.5 hover-elevate"
                   data-testid="tab-grid"
                 >
                   Grid View
                 </TabsTrigger>
                 <TabsTrigger
                   value="activity"
-                  className="rounded-lg gap-1.5"
+                  className="rounded-lg gap-1.5 hover-elevate"
                   data-testid="tab-activity"
                 >
                   <Activity className="h-4 w-4" />
@@ -388,10 +396,15 @@ export default function Home() {
                     }
                   />
                 ) : (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 md:gap-6">
-                    {productsToDisplay.map((product) => (
-                      // Pass all needed props to ProductCard
-                      <ProductCard key={product.id} {...product} />
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 md:gap-6 animate-fade-in">
+                    {productsToDisplay.map((product, index) => (
+                      <div 
+                        key={product.id} 
+                        className="animate-slide-up"
+                        style={{ animationDelay: `${index * 0.1}s` }}
+                      >
+                        <ProductCard {...product} />
+                      </div>
                     ))}
                   </div>
                 )}
@@ -399,7 +412,7 @@ export default function Home() {
 
               {/* Activity Feed Content */}
               <TabsContent value="activity" className="mt-6">
-                <div className="max-w-3xl mx-auto space-y-4">
+                <div className="max-w-3xl mx-auto space-y-4 animate-fade-in">
                   {isLoading ? (
                     <LoadingState />
                   ) : activityFeed.length === 0 ? (
@@ -409,11 +422,15 @@ export default function Home() {
                       </p>
                     </div>
                   ) : (
-                    activityFeed.map(
-                      (
-                        item: ActivityItem, // Use ActivityItem type
-                      ) => <ActivityFeedItem key={item.id} {...item} />,
-                    )
+                    activityFeed.map((item: ActivityItem, index) => (
+                      <div 
+                        key={item.id}
+                        className="animate-slide-up"
+                        style={{ animationDelay: `${index * 0.05}s` }}
+                      >
+                        <ActivityFeedItem {...item} />
+                      </div>
+                    ))
                   )}
                 </div>
               </TabsContent>
@@ -422,6 +439,13 @@ export default function Home() {
         </main>
       </div>
       <AddItemModal open={isAddModalOpen} onOpenChange={setIsAddModalOpen} />
+      <CSVImportModal 
+        open={isCSVImportOpen} 
+        onOpenChange={setIsCSVImportOpen}
+        onImportComplete={() => {
+          queryClient.invalidateQueries({ queryKey: ["wishlist"] });
+        }}
+      />
     </div>
   );
 }

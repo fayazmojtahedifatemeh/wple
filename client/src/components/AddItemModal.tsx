@@ -15,6 +15,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ProductGallery } from "@/components/ProductGallery";
+import { GoogleLensSearch } from "@/components/GoogleLensSearch";
 import { scrapeProduct, addWishlistItem } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
 import type {
@@ -55,6 +56,8 @@ export function AddItemModal({ open, onOpenChange }: AddItemModalProps) {
   const [manualCategory, setManualCategory] = useState<string>("");
   const [manualSubcategory, setManualSubcategory] = useState<string>("");
   const [subcategories, setSubcategories] = useState<string[]>([]);
+  const [aiCategory, setAiCategory] = useState<{category: string, subcategory: string | null} | null>(null);
+  const [showLensSearch, setShowLensSearch] = useState(false);
   const queryClient = useQueryClient();
   const { toast } = useToast();
 
@@ -81,6 +84,11 @@ export function AddItemModal({ open, onOpenChange }: AddItemModalProps) {
       console.log("Received data:", data);
       console.log("-------------------------------------");
       setPreview(data);
+      
+      // Auto-categorize with AI when preview is loaded
+      if (data.title) {
+        categorizeWithAI(data.title, data.brand, url);
+      }
     },
     onError: (error: any) => {
       toast({
@@ -91,6 +99,26 @@ export function AddItemModal({ open, onOpenChange }: AddItemModalProps) {
       console.error("Scrape Mutation Error:", error);
     },
   });
+
+  // AI categorization function
+  const categorizeWithAI = async (title: string, brand?: string, url?: string) => {
+    try {
+      const response = await fetch('/api/categorize', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ title, brand, url }),
+      });
+      
+      if (response.ok) {
+        const result = await response.json();
+        setAiCategory(result);
+      }
+    } catch (error) {
+      console.error('AI categorization failed:', error);
+    }
+  };
 
   // Mutation for adding item to wishlist
   const addMutation = useMutation({
@@ -173,45 +201,83 @@ export function AddItemModal({ open, onOpenChange }: AddItemModalProps) {
     // Use the custom handleOpenChange
     <Dialog open={open} onOpenChange={handleOpenChange}>
       {/* Add max height and flex structure for scrolling */}
-      <DialogContent className="max-w-2xl glass rounded-3xl border-glass-border flex flex-col max-h-[90vh]">
+      <DialogContent className="max-w-2xl glass-strong rounded-3xl border-glass-border flex flex-col max-h-[90vh] animate-scale-in">
         <DialogHeader>
-          <DialogTitle className="text-2xl font-display gradient-text">
+          <DialogTitle className="text-2xl font-display gradient-text animate-fade-in">
             Add Item to Wishlist
           </DialogTitle>
-          <DialogDescription>
+          <DialogDescription className="animate-fade-in">
             Paste a product URL to automatically fetch details
           </DialogDescription>
         </DialogHeader>
         {/* Make this middle section scrollable */}
         {/* Added standard scrollbar classes, adjust as needed or use plugin */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-6 scrollbar scrollbar-thumb-primary scrollbar-track-primary/20 scrollbar-thumb-rounded-full scrollbar-track-rounded-full">
-          {/* URL Input Section */}
-          <div className="space-y-2">
-            <Label htmlFor="url">Product URL</Label>
-            <div className="flex gap-2">
-              <Input
-                id="url"
-                placeholder="https://example.com/product"
-                value={url}
-                onChange={(e) => setUrl(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && handleFetchPreview()}
-                className="rounded-xl"
-                data-testid="input-product-url"
-              />
-              <Button
-                onClick={handleFetchPreview}
-                disabled={!url || scrapeMutation.isPending}
-                className="rounded-xl gradient-bg"
-                data-testid="button-fetch-preview"
-              >
-                {scrapeMutation.isPending ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  "Fetch"
-                )}
-              </Button>
-            </div>
+        <div className="flex-1 overflow-y-auto p-4 space-y-6 scrollbar-refined animate-fade-in">
+          {/* Search Options Tabs */}
+          <div className="flex gap-2">
+            <Button
+              variant={!showLensSearch ? "default" : "outline"}
+              onClick={() => setShowLensSearch(false)}
+              className="rounded-xl"
+            >
+              URL Search
+            </Button>
+            <Button
+              variant={showLensSearch ? "default" : "outline"}
+              onClick={() => setShowLensSearch(true)}
+              className="rounded-xl"
+            >
+              Google Lens
+            </Button>
           </div>
+
+          {!showLensSearch ? (
+            /* URL Input Section */
+            <div className="space-y-2">
+              <Label htmlFor="url">Product URL</Label>
+              <div className="flex gap-2">
+                <Input
+                  id="url"
+                  placeholder="https://example.com/product"
+                  value={url}
+                  onChange={(e) => setUrl(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && handleFetchPreview()}
+                  className="rounded-xl"
+                  data-testid="input-product-url"
+                />
+                <Button
+                  onClick={handleFetchPreview}
+                  disabled={!url || scrapeMutation.isPending}
+                  className="rounded-xl gradient-bg-animated glow-interactive hover-elevate"
+                  data-testid="button-fetch-preview"
+                >
+                  {scrapeMutation.isPending ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    "Fetch"
+                  )}
+                </Button>
+              </div>
+            </div>
+          ) : (
+            /* Google Lens Search */
+            <GoogleLensSearch
+              onItemSelect={(item) => {
+                // Convert Google Lens result to our format
+                const mockScrapedProduct: ScrapedProduct = {
+                  title: item.title,
+                  price: parseFloat(item.price?.replace('$', '') || '0'),
+                  currency: '$',
+                  images: [item.image],
+                  brand: item.source,
+                  inStock: true,
+                  url: item.url,
+                };
+                setPreview(mockScrapedProduct);
+                setShowLensSearch(false);
+              }}
+            />
+          )}
 
           {/* Loading state for scrape */}
           {scrapeMutation.isPending && !preview && (
@@ -247,9 +313,7 @@ export function AddItemModal({ open, onOpenChange }: AddItemModalProps) {
 
           {/* Preview Section - Only shows if preview exists */}
           {preview && (
-            <div className="space-y-4 rounded-2xl">
-              {" "}
-              {/* Removed bg-muted/50 and padding */}
+            <div className="space-y-4 rounded-2xl animate-slide-up">
               <h3 className="font-semibold text-lg">Preview</h3>
               <div className="grid md:grid-cols-2 gap-6">
                 <ProductGallery images={preview.images} />
@@ -334,6 +398,30 @@ export function AddItemModal({ open, onOpenChange }: AddItemModalProps) {
                     )}
                 </div>
               </div>
+              {/* AI Category Suggestion */}
+              {aiCategory && (
+                <div className="space-y-2 p-4 rounded-xl glass-weak border border-primary/20 animate-fade-in">
+                  <div className="flex items-center gap-2">
+                    <div className="w-2 h-2 rounded-full bg-primary animate-pulse"></div>
+                    <Label className="text-sm font-medium text-primary">AI Suggested Category</Label>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-semibold">
+                      {(aiCategory.category.charAt(0).toUpperCase() + aiCategory.category.slice(1)).replace("-", " & ")}
+                    </span>
+                    {aiCategory.subcategory && (
+                      <>
+                        <span className="text-muted-foreground">•</span>
+                        <span className="text-sm text-muted-foreground">{aiCategory.subcategory}</span>
+                      </>
+                    )}
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    This will be used automatically if you don't select a manual category
+                  </p>
+                </div>
+              )}
+
               {/* Category Selection */}
               <div className="grid grid-cols-2 gap-4 pt-4">
                 <div className="space-y-2">
@@ -342,7 +430,7 @@ export function AddItemModal({ open, onOpenChange }: AddItemModalProps) {
                     id="category"
                     value={manualCategory}
                     onChange={handleCategoryChange}
-                    className="w-full h-10 px-3 rounded-xl bg-background border border-border text-sm focus:ring-ring focus:ring-1 focus:outline-none" // Added focus styles
+                    className="w-full h-10 px-3 rounded-xl bg-background border border-border text-sm focus:ring-ring focus:ring-1 focus:outline-none"
                   >
                     <option value="">Auto-categorize (Gemini)</option>
                     {Object.keys(PREDEFINED_CATEGORIES).map((cat) => (
@@ -351,7 +439,7 @@ export function AddItemModal({ open, onOpenChange }: AddItemModalProps) {
                           "-",
                           " & ",
                         )}
-                      </option> // Format name
+                      </option>
                     ))}
                   </select>
                 </div>
@@ -400,7 +488,7 @@ export function AddItemModal({ open, onOpenChange }: AddItemModalProps) {
               <Button
                 onClick={handleAdd}
                 disabled={addMutation.isPending}
-                className="rounded-xl gradient-bg"
+                className="rounded-xl gradient-bg-animated glow-interactive hover-elevate"
                 data-testid="button-confirm-add"
               >
                 {addMutation.isPending ? (
