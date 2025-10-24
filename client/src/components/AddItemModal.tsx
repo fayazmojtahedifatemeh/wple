@@ -360,7 +360,7 @@ export function AddItemModal({ open, onOpenChange }: AddItemModalProps) {
                         {preview.colors.map((color: ProductVariant) => (
                           <Button
                             key={`${color.name}-${color.available}`}
-                            type="button" // Important: prevent form submission
+                            type="button"
                             variant={
                               selectedColor === color.name
                                 ? "default"
@@ -369,17 +369,21 @@ export function AddItemModal({ open, onOpenChange }: AddItemModalProps) {
                             size="sm"
                             className={`rounded-lg h-auto text-xs px-2 py-1 transition-all ${
                               !color.available
-                                ? "line-through text-muted-foreground opacity-60 cursor-not-allowed"
+                                ? "line-through text-muted-foreground opacity-60" // Remove cursor-not-allowed
                                 : selectedColor === color.name
                                   ? "bg-primary text-primary-foreground"
                                   : "hover:bg-accent"
                             }`}
-                            disabled={!color.available}
+                            // REMOVED: disabled={!color.available} - This is the key fix!
                             onClick={() => {
-                              if (color.available) {
-                                setSelectedColor(color.name);
-                                console.log("Selected color:", color.name);
-                              }
+                              // REMOVED: if (color.available) condition - allow ALL clicks
+                              setSelectedColor(color.name);
+                              console.log(
+                                "Selected color:",
+                                color.name,
+                                "Available:",
+                                color.available,
+                              );
                             }}
                           >
                             {color.swatch && (
@@ -409,24 +413,28 @@ export function AddItemModal({ open, onOpenChange }: AddItemModalProps) {
                         {preview.sizes.map((size: ProductVariant) => (
                           <Button
                             key={`${size.name}-${size.available}`}
-                            type="button" // Important: prevent form submission
+                            type="button"
                             variant={
                               selectedSize === size.name ? "default" : "outline"
                             }
                             size="sm"
                             className={`rounded-lg text-xs px-2 py-1 transition-all ${
                               !size.available
-                                ? "line-through text-muted-foreground opacity-60 cursor-not-allowed"
+                                ? "line-through text-muted-foreground opacity-60" // Remove cursor-not-allowed
                                 : selectedSize === size.name
                                   ? "bg-primary text-primary-foreground"
                                   : "hover:bg-accent"
                             }`}
-                            disabled={!size.available}
+                            // REMOVED: disabled={!size.available} - This is the key fix!
                             onClick={() => {
-                              if (size.available) {
-                                setSelectedSize(size.name);
-                                console.log("Selected size:", size.name);
-                              }
+                              // REMOVED: if (size.available) condition - allow ALL clicks
+                              setSelectedSize(size.name);
+                              console.log(
+                                "Selected size:",
+                                size.name,
+                                "Available:",
+                                size.available,
+                              );
                             }}
                           >
                             {size.name}
@@ -436,6 +444,7 @@ export function AddItemModal({ open, onOpenChange }: AddItemModalProps) {
                       </div>
                     </div>
                   )}
+
                   {/* Show message if colors/sizes are expected but not found */}
                   {(!preview.colors || preview.colors.length === 0) &&
                     (!preview.sizes || preview.sizes.length === 0) && (

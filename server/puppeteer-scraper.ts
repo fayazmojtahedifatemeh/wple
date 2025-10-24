@@ -9,12 +9,6 @@ interface PuppeteerConfig {
 }
 
 const siteConfigs: Record<string, PuppeteerConfig> = {
-  // FIX: Add config for aym-studio
-  "aym-studio.com": {
-    waitForSelector: "h1.product-title",
-    timeout: 10000,
-    additionalWaitTime: 2000,
-  },
   "zara.com": {
     waitForSelector: 'span[data-qa-qualifier="price-amount-current"]',
     timeout: 10000,
@@ -73,7 +67,9 @@ export async function scrapeWithPuppeteer(
         "--disable-accelerated-2d-canvas",
         "--disable-gpu",
         "--window-size=1920x1080",
+        "--single-process", // Add this for Replit compatibility
       ],
+      executablePath: process.env.CHROME_PATH || "/usr/bin/chromium-browser", // Use system Chromium
     });
 
     const page = await browser.newPage();

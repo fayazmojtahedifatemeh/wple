@@ -290,89 +290,200 @@ interface SiteExtractor {
   needsPuppeteer?: boolean;
 }
 
-// --- AYM Studio Extractor (Needs Puppeteer - No Change) ---
+// ==========================================================
+// AYM Studio Extractor - ALL COLORS SELECTABLE
+// ==========================================================
 const aymStudioExtractor: SiteExtractor = {
-  needsPuppeteer: true,
+  needsPuppeteer: false,
+
   extractTitle($) {
+    const metaTitle = $('meta[property="og:title"]').attr("content");
+    if (metaTitle) return cleanText(metaTitle);
     return cleanText($("h1.product-title").text()) || null;
   },
-  extractPrice($, url) {
-    const currencyMeta = $('meta[property="og:price:currency"]').attr(
-      "content",
-    );
-    const priceMeta = $('meta[property="og:price:amount"]').attr("content");
-    if (priceMeta && currencyMeta)
-      return {
-        price: parseFloat(priceMeta),
-        currency: getCurrencySymbol(currencyMeta),
-      };
-    const priceText = cleanText(
-      $("price-list sale-price, price-list regular-price").text(),
-    );
-    if (!priceText) return null;
-    let currency = currencyMeta
-      ? getCurrencySymbol(currencyMeta)
-      : detectCurrency(priceText, url);
-    return { price: parsePrice(priceText), currency: currency };
+
+  extractBrand() {
+    return "AYM Studio";
   },
+
+  extractPrice($, url) {
+    try {
+      const priceMeta = $('meta[property="product:price:amount"]').attr(
+        "content",
+      );
+      const currencyMeta = $('meta[property="product:price:currency"]').attr(
+        "content",
+      );
+
+      if (priceMeta && currencyMeta) {
+        const price = parseFloat(priceMeta.replace(",", "."));
+        return {
+          price: price,
+          currency: getCurrencySymbol(currencyMeta),
+        };
+      }
+
+      const jsonLd = $('script[type="application/ld+json"]').html();
+      if (jsonLd) {
+        try {
+          const schema = JSON.parse(jsonLd);
+          if (schema.hasVariant && schema.hasVariant.length > 0) {
+            const firstAvailableVariant = schema.hasVariant.find(
+              (v: any) =>
+                v.offers?.availability !== "http://schema.org/OutOfStock",
+            );
+            if (firstAvailableVariant?.offers?.price) {
+              return {
+                price: parseFloat(firstAvailableVariant.offers.price),
+                currency: getCurrencySymbol(
+                  firstAvailableVariant.offers.priceCurrency || "EUR",
+                ),
+              };
+            }
+          }
+        } catch (e) {
+          console.error("[AYM Extractor] Error parsing JSON-LD:", e);
+        }
+      }
+    } catch (error) {
+      console.error("[AYM Extractor] Error extracting price:", error);
+    }
+    return null;
+  },
+
   extractImages($, baseUrl) {
     const images: string[] = [];
     const seenUrls = new Set<string>();
-    $("scroll-carousel div.product-gallery__media img").each((_, el) => {
-      let src: string | undefined = $(el).attr("src");
-      const srcset = $(el).attr("srcset");
-      if (srcset) src = parseSrcset(srcset);
-      const absoluteSrc = makeAbsoluteUrl(src, baseUrl);
+
+    const metaImage = $('meta[property="og:image"]').attr("content");
+    if (metaImage) {
+      const absoluteSrc = makeAbsoluteUrl(metaImage, baseUrl);
       if (absoluteSrc && !seenUrls.has(absoluteSrc)) {
         images.push(absoluteSrc);
         seenUrls.add(absoluteSrc);
       }
+    }
+
+    const jsonLd = $('script[type="application/ld+json"]').html();
+    if (jsonLd) {
+      try {
+        const schema = JSON.parse(jsonLd);
+        if (schema.hasVariant && Array.isArray(schema.hasVariant)) {
+          schema.hasVariant.forEach((variant: any) => {
+            if (variant.image && !seenUrls.has(variant.image)) {
+              images.push(variant.image);
+              seenUrls.add(variant.image);
+            }
+          });
+        }
+      } catch (e) {
+        console.error("[AYM Extractor] Error parsing JSON-LD for images:", e);
+      }
+    }
+
+    $(
+      "img[data-product-image], .product-gallery img, .product__media img",
+    ).each((_, el) => {
+      let src = $(el).attr("src") || $(el).attr("data-src");
+      const srcset = $(el).attr("srcset");
+      if (srcset) src = parseSrcset(srcset);
+
+      if (src) {
+        if (src.startsWith("//")) src = "https:" + src;
+        const absoluteSrc = makeAbsoluteUrl(src, baseUrl);
+        if (absoluteSrc && !seenUrls.has(absoluteSrc)) {
+          images.push(absoluteSrc);
+          seenUrls.add(absoluteSrc);
+        }
+      }
     });
+
     return images.slice(0, 5);
   },
-  extractColors($) {
-    // Note: This HTML structure might also be wrong if it needs Puppeteer
+
+  extractColors($, url) {
     const colors: ProductVariant[] = [];
     const foundNames = new Set<string>();
-    $("div.product-form__swatches--colour label.product-form__swatch").each(
-      (_, el) => {
-        const colorName = cleanText(
-          $(el).find("span.product-form__swatch-value").text(),
-        );
-        const swatchImg = $(el)
-          .find("img.product-form__swatch-image")
-          .attr("src");
-        const isSoldOut =
-          $(el).find("span.product-form__swatch-value--sold-out").length > 0;
-        if (colorName && !foundNames.has(colorName)) {
-          colors.push({
-            name: colorName,
-            swatch: makeAbsoluteUrl(swatchImg, ""),
-            available: !isSoldOut,
-          });
-          foundNames.add(colorName);
+
+    try {
+      const jsonLd = $('script[type="application/ld+json"]').html();
+      if (jsonLd) {
+        try {
+          const schema = JSON.parse(jsonLd);
+          if (schema.hasVariant && Array.isArray(schema.hasVariant)) {
+            // Extract ALL unique colors, mark availability but make ALL selectable
+            schema.hasVariant.forEach((variant: any) => {
+              const variantName = variant.name || "";
+              // Extract color: "Gala Top in Organic Bamboo - XS / Black" -> "Black"
+              const colorMatch = variantName.split("/").pop()?.trim();
+              if (colorMatch && !foundNames.has(colorMatch)) {
+                const isAvailable =
+                  variant.offers?.availability !==
+                  "http://schema.org/OutOfStock";
+
+                colors.push({
+                  name: cleanText(colorMatch),
+                  available: isAvailable, // Track availability but ALL are selectable
+                });
+                foundNames.add(colorMatch);
+              }
+            });
+          }
+        } catch (e) {
+          console.error("[AYM Extractor] Error parsing JSON-LD for colors:", e);
         }
-      },
-    );
+      }
+
+      console.log("[AYM Extractor] Colors found (all selectable):", colors);
+    } catch (error) {
+      console.error("[AYM Extractor] Error extracting colors:", error);
+    }
+
     return colors;
   },
-  extractSizes($) {
-    // Note: This HTML structure might also be wrong if it needs Puppeteer
+
+  extractSizes($, url) {
     const sizes: ProductVariant[] = [];
     const foundNames = new Set<string>();
-    $("div.product-form__swatches--size label.product-form__swatch").each(
-      (_, el) => {
-        const sizeName = cleanText(
-          $(el).find("span.product-form__swatch-value").text(),
-        );
-        const isSoldOut =
-          $(el).find("span.product-form__swatch-value--sold-out").length > 0;
-        if (sizeName && !foundNames.has(sizeName)) {
-          sizes.push({ name: sizeName, available: !isSoldOut });
-          foundNames.add(sizeName);
+
+    try {
+      const jsonLd = $('script[type="application/ld+json"]').html();
+      if (jsonLd) {
+        try {
+          const schema = JSON.parse(jsonLd);
+          if (schema.hasVariant && Array.isArray(schema.hasVariant)) {
+            // Extract ALL unique sizes, mark availability but make ALL selectable
+            schema.hasVariant.forEach((variant: any) => {
+              const variantName = variant.name || "";
+              // Extract size: "Gala Top in Organic Bamboo - XS / Black" -> "XS"
+              const sizeMatch = variantName
+                .split("-")
+                .pop()
+                ?.split("/")[0]
+                ?.trim();
+              if (sizeMatch && !foundNames.has(sizeMatch)) {
+                const isAvailable =
+                  variant.offers?.availability !==
+                  "http://schema.org/OutOfStock";
+
+                sizes.push({
+                  name: cleanText(sizeMatch),
+                  available: isAvailable, // Track availability but ALL are selectable
+                });
+                foundNames.add(sizeMatch);
+              }
+            });
+          }
+        } catch (e) {
+          console.error("[AYM Extractor] Error parsing JSON-LD for sizes:", e);
         }
-      },
-    );
+      }
+
+      console.log("[AYM Extractor] Sizes found (all selectable):", sizes);
+    } catch (error) {
+      console.error("[AYM Extractor] Error extracting sizes:", error);
+    }
+
     return sizes;
   },
 };
@@ -1438,6 +1549,9 @@ function getExtractorForSite(url: string): SiteExtractor | null {
   if (hostname.includes("amazon.")) return amazonExtractor;
   if (hostname.includes("mytheresa.com")) return mytheresaExtractor;
   if (hostname.includes("yoox.com")) return yooxExtractor;
+  if (url.includes("aym-studio.com")) {
+    return aymStudioExtractor;
+  }
   return null;
 }
 
@@ -1485,8 +1599,10 @@ export async function scrapeProductFromUrl(
         maxRedirects: 5,
       });
     } catch (axiosError: unknown) {
-      console.error('[Scraper] Axios request failed:', axiosError);
-      throw new Error(`Network request failed: ${axiosError instanceof Error ? axiosError.message : 'Unknown error'}`);
+      console.error("[Scraper] Axios request failed:", axiosError);
+      throw new Error(
+        `Network request failed: ${axiosError instanceof Error ? axiosError.message : "Unknown error"}`,
+      );
     }
 
     if (response.status < 200 || response.status >= 300) {
