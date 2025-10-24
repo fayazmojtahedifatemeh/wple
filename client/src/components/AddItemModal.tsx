@@ -56,10 +56,16 @@ export function AddItemModal({ open, onOpenChange }: AddItemModalProps) {
   const [manualCategory, setManualCategory] = useState<string>("");
   const [manualSubcategory, setManualSubcategory] = useState<string>("");
   const [subcategories, setSubcategories] = useState<string[]>([]);
-  const [aiCategory, setAiCategory] = useState<{category: string, subcategory: string | null} | null>(null);
+  const [aiCategory, setAiCategory] = useState<{
+    category: string;
+    subcategory: string | null;
+  } | null>(null);
   const [showLensSearch, setShowLensSearch] = useState(false);
   const queryClient = useQueryClient();
   const { toast } = useToast();
+  // Add these with your other state variables
+  const [selectedColor, setSelectedColor] = useState<string>("");
+  const [selectedSize, setSelectedSize] = useState<string>("");
 
   // Log preview data when it changes
   useEffect(() => {
@@ -84,7 +90,7 @@ export function AddItemModal({ open, onOpenChange }: AddItemModalProps) {
       console.log("Received data:", data);
       console.log("-------------------------------------");
       setPreview(data);
-      
+
       // Auto-categorize with AI when preview is loaded
       if (data.title) {
         categorizeWithAI(data.title, data.brand, url);
@@ -101,22 +107,26 @@ export function AddItemModal({ open, onOpenChange }: AddItemModalProps) {
   });
 
   // AI categorization function
-  const categorizeWithAI = async (title: string, brand?: string, url?: string) => {
+  const categorizeWithAI = async (
+    title: string,
+    brand?: string,
+    url?: string,
+  ) => {
     try {
-      const response = await fetch('/api/categorize', {
-        method: 'POST',
+      const response = await fetch("/api/categorize", {
+        method: "POST",
         headers: {
-          'Content-Type': 'application/json',
+          "Content-Type": "application/json",
         },
         body: JSON.stringify({ title, brand, url }),
       });
-      
+
       if (response.ok) {
         const result = await response.json();
         setAiCategory(result);
       }
     } catch (error) {
-      console.error('AI categorization failed:', error);
+      console.error("AI categorization failed:", error);
     }
   };
 
@@ -154,10 +164,15 @@ export function AddItemModal({ open, onOpenChange }: AddItemModalProps) {
   const handleAdd = () => {
     if (!preview) return;
     console.log("--- AddItemModal: handleAdd called ---");
+    console.log("Selected color:", selectedColor);
+    console.log("Selected size:", selectedSize);
+
     const dataToSend: InsertScrapedProduct = {
       ...preview,
-      manualCategory: manualCategory || undefined, // Send undefined if empty string
-      manualSubcategory: manualSubcategory || undefined, // Send undefined if empty string
+      manualCategory: manualCategory || undefined,
+      manualSubcategory: manualSubcategory || undefined,
+      selectedColor: selectedColor || undefined, // Add selected color
+      selectedSize: selectedSize || undefined, // Add selected size
     };
     console.log("Sending data:", dataToSend);
     addMutation.mutate(dataToSend);
@@ -172,10 +187,12 @@ export function AddItemModal({ open, onOpenChange }: AddItemModalProps) {
       setManualCategory("");
       setManualSubcategory("");
       setSubcategories([]);
-      scrapeMutation.reset(); // Reset scrape mutation state
-      addMutation.reset(); // Reset add mutation state
+      setSelectedColor(""); // Add this
+      setSelectedSize(""); // Add this
+      scrapeMutation.reset();
+      addMutation.reset();
     }
-    onOpenChange(isOpen); // Call the original prop function
+    onOpenChange(isOpen);
   };
 
   // Handler for category dropdown changes
@@ -266,8 +283,8 @@ export function AddItemModal({ open, onOpenChange }: AddItemModalProps) {
                 // Convert Google Lens result to our format
                 const mockScrapedProduct: ScrapedProduct = {
                   title: item.title,
-                  price: parseFloat(item.price?.replace('$', '') || '0'),
-                  currency: '$',
+                  price: parseFloat(item.price?.replace("$", "") || "0"),
+                  currency: "$",
                   images: [item.image],
                   brand: item.source,
                   inStock: true,
@@ -338,30 +355,46 @@ export function AddItemModal({ open, onOpenChange }: AddItemModalProps) {
                   {/* Colors */}
                   {preview.colors && preview.colors.length > 0 && (
                     <div>
-                      <Label className="text-xs mb-2 block">Colors</Label>
+                      <Label className="text-xs mb-2 block">Select Color</Label>
                       <div className="flex gap-2 flex-wrap">
                         {preview.colors.map((color: ProductVariant) => (
                           <Button
-                            key={`${color.name}-${color.available}`} // More unique key
-                            variant="outline"
+                            key={`${color.name}-${color.available}`}
+                            type="button" // Important: prevent form submission
+                            variant={
+                              selectedColor === color.name
+                                ? "default"
+                                : "outline"
+                            }
                             size="sm"
-                            className={`rounded-lg h-auto text-xs px-2 py-1 ${!color.available ? "line-through text-muted-foreground opacity-60 cursor-not-allowed" : "cursor-default"}`} // Adjusted styling and cursor
+                            className={`rounded-lg h-auto text-xs px-2 py-1 transition-all ${
+                              !color.available
+                                ? "line-through text-muted-foreground opacity-60 cursor-not-allowed"
+                                : selectedColor === color.name
+                                  ? "bg-primary text-primary-foreground"
+                                  : "hover:bg-accent"
+                            }`}
                             disabled={!color.available}
-                            aria-disabled={!color.available} // Accessibility
-                            tabIndex={-1} // Prevent tabbing to disabled buttons
+                            onClick={() => {
+                              if (color.available) {
+                                setSelectedColor(color.name);
+                                console.log("Selected color:", color.name);
+                              }
+                            }}
                           >
                             {color.swatch && (
                               <span
-                                className="h-3 w-3 rounded-full mr-1.5 border" // Smaller swatch
+                                className="h-3 w-3 rounded-full mr-1.5 border"
                                 style={{
                                   backgroundImage: `url(${color.swatch})`,
-                                  backgroundColor: color.name.toLowerCase(), // Fallback bg
+                                  backgroundColor: color.name.toLowerCase(),
                                   backgroundSize: "cover",
                                   backgroundPosition: "center",
                                 }}
                               />
                             )}
                             {color.name}
+                            {selectedColor === color.name && " ✓"}
                           </Button>
                         ))}
                       </div>
@@ -371,19 +404,33 @@ export function AddItemModal({ open, onOpenChange }: AddItemModalProps) {
                   {/* Sizes */}
                   {preview.sizes && preview.sizes.length > 0 && (
                     <div>
-                      <Label className="text-xs mb-2 block">Sizes</Label>
+                      <Label className="text-xs mb-2 block">Select Size</Label>
                       <div className="flex gap-2 flex-wrap">
                         {preview.sizes.map((size: ProductVariant) => (
                           <Button
-                            key={`${size.name}-${size.available}`} // More unique key
-                            variant="outline"
+                            key={`${size.name}-${size.available}`}
+                            type="button" // Important: prevent form submission
+                            variant={
+                              selectedSize === size.name ? "default" : "outline"
+                            }
                             size="sm"
-                            className={`rounded-lg text-xs px-2 py-1 ${!size.available ? "line-through text-muted-foreground opacity-60 cursor-not-allowed" : "cursor-default"}`} // Adjusted styling and cursor
+                            className={`rounded-lg text-xs px-2 py-1 transition-all ${
+                              !size.available
+                                ? "line-through text-muted-foreground opacity-60 cursor-not-allowed"
+                                : selectedSize === size.name
+                                  ? "bg-primary text-primary-foreground"
+                                  : "hover:bg-accent"
+                            }`}
                             disabled={!size.available}
-                            aria-disabled={!size.available}
-                            tabIndex={-1}
+                            onClick={() => {
+                              if (size.available) {
+                                setSelectedSize(size.name);
+                                console.log("Selected size:", size.name);
+                              }
+                            }}
                           >
                             {size.name}
+                            {selectedSize === size.name && " ✓"}
                           </Button>
                         ))}
                       </div>
@@ -403,21 +450,29 @@ export function AddItemModal({ open, onOpenChange }: AddItemModalProps) {
                 <div className="space-y-2 p-4 rounded-xl glass-weak border border-primary/20 animate-fade-in">
                   <div className="flex items-center gap-2">
                     <div className="w-2 h-2 rounded-full bg-primary animate-pulse"></div>
-                    <Label className="text-sm font-medium text-primary">AI Suggested Category</Label>
+                    <Label className="text-sm font-medium text-primary">
+                      AI Suggested Category
+                    </Label>
                   </div>
                   <div className="flex items-center gap-2">
                     <span className="text-sm font-semibold">
-                      {(aiCategory.category.charAt(0).toUpperCase() + aiCategory.category.slice(1)).replace("-", " & ")}
+                      {(
+                        aiCategory.category.charAt(0).toUpperCase() +
+                        aiCategory.category.slice(1)
+                      ).replace("-", " & ")}
                     </span>
                     {aiCategory.subcategory && (
                       <>
                         <span className="text-muted-foreground">•</span>
-                        <span className="text-sm text-muted-foreground">{aiCategory.subcategory}</span>
+                        <span className="text-sm text-muted-foreground">
+                          {aiCategory.subcategory}
+                        </span>
                       </>
                     )}
                   </div>
                   <p className="text-xs text-muted-foreground">
-                    This will be used automatically if you don't select a manual category
+                    This will be used automatically if you don't select a manual
+                    category
                   </p>
                 </div>
               )}

@@ -79,6 +79,7 @@ export type InsertScrapedProduct = z.infer<typeof insertScrapedProductSchema>;
 //
 
 // Wishlist items
+// In shared/schema.ts - update the wishlistItems table
 export const wishlistItems = pgTable("wishlist_items", {
   id: varchar("id")
     .primaryKey()
@@ -98,10 +99,13 @@ export const wishlistItems = pgTable("wishlist_items", {
   inStock: boolean("in_stock").notNull().default(true),
   colors: text("colors")
     .array()
-    .default(sql`ARRAY[]::text[]`), // Stays as string[]
+    .default(sql`ARRAY[]::text[]`),
   sizes: text("sizes")
     .array()
-    .default(sql`ARRAY[]::text[]`), // Stays as string[]
+    .default(sql`ARRAY[]::text[]`),
+  // ADD THESE TWO NEW COLUMNS:
+  selectedColor: text("selected_color"),
+  selectedSize: text("selected_size"),
   priceHistory: jsonb("price_history")
     .$type<PriceHistoryEntry[]>()
     .notNull()

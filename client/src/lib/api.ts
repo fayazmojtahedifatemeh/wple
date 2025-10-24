@@ -10,9 +10,11 @@ const API_BASE = "/api";
 
 export async function fetchWishlistItems(): Promise<WishlistItem[]> {
   const response = await fetch(`${API_BASE}/wishlist`);
+
   if (!response.ok) {
     throw new Error("Failed to fetch wishlist items");
   }
+
   return response.json();
 }
 
@@ -50,7 +52,7 @@ export async function addWishlistItem(
 
 export async function updateWishlistItem(
   id: string,
-  updates: Partial<WishlistItem>,
+  updates: { selectedSize?: string; selectedColor?: string }, // More specific type
 ): Promise<WishlistItem> {
   const response = await fetch(`${API_BASE}/wishlist/${id}`, {
     method: "PATCH",

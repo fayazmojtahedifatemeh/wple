@@ -13,6 +13,7 @@ import { fetchWishlistItems, updateAllPrices } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
 import type { WishlistItem } from "@shared/schema";
 import { AppSidebar, CategoryCounts } from "@/components/app-sidebar";
+import { ProductDetailModal } from "@/components/ProductDetailModal";
 
 // --- Helper functions ---
 
@@ -145,6 +146,9 @@ export default function Home() {
   const [isCSVImportOpen, setIsCSVImportOpen] = useState(false);
   // FIX: State for selected category/subcategory
   // FIX: State for selected category/subcategory
+  // Add this with your other state variables
+  const [selectedItem, setSelectedItem] = useState<WishlistItem | null>(null);
+  const [detailModalOpen, setDetailModalOpen] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null); // null means "All Items"
   const [selectedSubcategory, setSelectedSubcategory] = useState<string | null>(
     null,
@@ -203,7 +207,10 @@ export default function Home() {
     });
     return counts;
   }, [allWishlistItems]);
-
+  const handleItemClick = (item: WishlistItem) => {
+    setSelectedItem(item);
+    setDetailModalOpen(true);
+  };
   // --- FIX: Filter Products Based on Selection ---
   const filteredProducts = useMemo(() => {
     if (!selectedCategory) {
@@ -294,10 +301,16 @@ export default function Home() {
       <div className="absolute inset-0 bg-gradient-to-br from-purple-200/40 via-pink-200/40 to-blue-200/40 dark:from-purple-900/20 dark:via-pink-900/20 dark:to-blue-900/20"></div>
       <div className="absolute inset-0 opacity-60">
         <div className="absolute top-0 left-0 w-96 h-96 bg-gradient-to-br from-purple-300/50 to-transparent dark:from-purple-700/30 rounded-full blur-3xl animate-pulse"></div>
-        <div className="absolute top-20 right-20 w-80 h-80 bg-gradient-to-br from-pink-300/50 to-transparent dark:from-pink-700/30 rounded-full blur-3xl animate-pulse" style={{ animationDelay: '1s' }}></div>
-        <div className="absolute bottom-20 left-1/3 w-96 h-96 bg-gradient-to-br from-blue-300/50 to-transparent dark:from-blue-700/30 rounded-full blur-3xl animate-pulse" style={{ animationDelay: '2s' }}></div>
+        <div
+          className="absolute top-20 right-20 w-80 h-80 bg-gradient-to-br from-pink-300/50 to-transparent dark:from-pink-700/30 rounded-full blur-3xl animate-pulse"
+          style={{ animationDelay: "1s" }}
+        ></div>
+        <div
+          className="absolute bottom-20 left-1/3 w-96 h-96 bg-gradient-to-br from-blue-300/50 to-transparent dark:from-blue-700/30 rounded-full blur-3xl animate-pulse"
+          style={{ animationDelay: "2s" }}
+        ></div>
       </div>
-      
+
       <AppSidebar
         selectedCategory={selectedCategory}
         selectedSubcategory={selectedSubcategory}
@@ -312,7 +325,9 @@ export default function Home() {
               className="rounded-xl glow-button hover-elevate glass-weak"
             />
             <div className="hidden sm:block">
-              <h2 className="text-lg font-semibold gradient-text">Wishlist Tracker</h2>
+              <h2 className="text-lg font-semibold gradient-text">
+                Wishlist Tracker
+              </h2>
             </div>
           </div>
           <div className="flex gap-2 md:gap-3 shrink-0">
@@ -409,15 +424,23 @@ export default function Home() {
                   />
                 ) : (
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 md:gap-6 animate-fade-in">
-                    {productsToDisplay.map((product, index) => (
-                      <div 
-                        key={product.id} 
-                        className="animate-slide-up"
-                        style={{ animationDelay: `${index * 0.1}s` }}
-                      >
-                        <ProductCard {...product} />
-                      </div>
-                    ))}
+                    {productsToDisplay.map((product, index) => {
+                      // Find the full item data to pass to the detail modal
+                      const fullItem = allWishlistItems.find(
+                        (item) => item.id === product.id,
+                      );
+
+                      return (
+                        <div
+                          key={product.id}
+                          className="animate-slide-up cursor-pointer transform transition-transform hover:scale-105"
+                          style={{ animationDelay: `${index * 0.1}s` }}
+                          onClick={() => fullItem && handleItemClick(fullItem)}
+                        >
+                          <ProductCard {...product} />
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
               </TabsContent>
@@ -435,7 +458,7 @@ export default function Home() {
                     </div>
                   ) : (
                     activityFeed.map((item: ActivityItem, index) => (
-                      <div 
+                      <div
                         key={item.id}
                         className="animate-slide-up"
                         style={{ animationDelay: `${index * 0.05}s` }}
@@ -451,15 +474,18 @@ export default function Home() {
         </main>
       </div>
       <AddItemModal open={isAddModalOpen} onOpenChange={setIsAddModalOpen} />
-      <CSVImportModal 
-        open={isCSVImportOpen} 
+      <CSVImportModal
+        open={isCSVImportOpen}
         onOpenChange={setIsCSVImportOpen}
         onImportComplete={() => {
           queryClient.invalidateQueries({ queryKey: ["wishlist"] });
         }}
       />
+      <ProductDetailModal
+        item={selectedItem}
+        open={detailModalOpen}
+        onOpenChange={setDetailModalOpen}
+      />
     </div>
   );
 }
-
-// --- (Helper functions calculatePriceChange and getActivityFeed are already defined above) ---

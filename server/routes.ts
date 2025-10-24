@@ -6,7 +6,7 @@ import { categorizeProduct } from "./gemini";
 import {
   insertWishlistItemSchema,
   insertCustomCategorySchema,
-  type InsertScrapedProduct, // FIX: Import new type
+  type InsertScrapedProduct,
 } from "@shared/schema";
 import { z } from "zod";
 
@@ -47,9 +47,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Get all wishlist items
+  // === ADDED: Get all wishlist items ===
   app.get("/api/wishlist", async (req, res) => {
-    // ... (no changes)
     try {
       const items = await storage.getWishlistItems();
       res.json(items);
@@ -61,7 +60,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Get wishlist items by category
   app.get("/api/wishlist/category/:category", async (req, res) => {
-    // ... (no changes)
     try {
       const { category } = req.params;
       const { subcategory } = req.query;
@@ -76,11 +74,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Add wishlist item (with scraping and AI categorization)
+  // === KEEP ONLY ONE: Add wishlist item ===
   app.post("/api/wishlist", async (req, res) => {
     try {
-      const { manualCategory, manualSubcategory, ...scrapedProduct } =
-        req.body as InsertScrapedProduct;
+      const {
+        manualCategory,
+        manualSubcategory,
+        selectedColor,
+        selectedSize,
+        ...scrapedProduct
+      } = req.body as InsertScrapedProduct & {
+        selectedColor?: string;
+        selectedSize?: string;
+      };
 
       const url = scrapedProduct.url;
       if (!url) {
@@ -109,25 +115,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const colorStrings = scrapedProduct.colors?.map((c) => c.name);
       const sizeStrings = scrapedProduct.sizes?.map((s) => s.name);
 
-      // FIX: Ensure price is formatted as a string for the 'numeric' type validation
-      // Your database schema likely expects a string here, even though you calculate with numbers.
       const priceAsString = scrapedProduct.price.toFixed(2);
 
       const itemData = {
         ...scrapedProduct,
-        price: priceAsString, // Use the formatted string price
+        price: priceAsString,
         category,
         subcategory,
         colors: colorStrings,
         sizes: sizeStrings,
+        selectedColor: selectedColor || null,
+        selectedSize: selectedSize || null,
       };
 
-      // FIX: Add detailed logging BEFORE validation
       console.log("--- Data Prepared for Validation ---");
+      console.log("Selected Color:", selectedColor);
+      console.log("Selected Size:", selectedSize);
       console.log(JSON.stringify(itemData, null, 2));
       console.log("-----------------------------------");
 
-      // This is where the "Invalid item data" error originates
       const validatedItem = insertWishlistItemSchema.parse(itemData);
 
       console.log("--- Validation Successful ---");
@@ -137,7 +143,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(item);
     } catch (error) {
       if (error instanceof z.ZodError) {
-        // FIX: Log the specific Zod validation errors
         console.error("--- Zod Validation Error Details ---");
         console.error(JSON.stringify(error.errors, null, 2));
         console.error("-----------------------------------");
@@ -150,7 +155,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // ... (The rest of your routes remain unchanged) ...
   // Update wishlist item
   app.patch("/api/wishlist/:id", async (req, res) => {
     try {
@@ -201,6 +205,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         inStock: scrapedProduct.inStock,
         colors: colorStrings,
         sizes: sizeStrings,
+        selectedColor: item.selectedColor,
+        selectedSize: item.selectedSize,
       });
 
       res.json(updatedItem);
