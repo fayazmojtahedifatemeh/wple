@@ -1,6 +1,22 @@
-import axios from "axios";
-import * as cheerio from "cheerio";
-import type { ProductVariant, ScrapedProduct } from "@shared/schema";
+import type { ProductVariant } from "@shared/schema"; // From your 3:56 PM message
+import * as cheerio from "cheerio"; // From your 3:56 PM message
+import vm from "vm"; // From your 3:56 PM message
+
+// Interface for all extractors
+interface SiteExtractor {
+  extractTitle($: cheerio.CheerioAPI): string | null;
+  extractPrice(
+    $: cheerio.CheerioAPI,
+    url: string,
+  ): { price: number; currency: string } | null;
+  extractImages($: cheerio.CheerioAPI, baseUrl: string): string[];
+  extractBrand?($: cheerio.CheerioAPI): string | undefined;
+  // URL is required for extractColors because it's used to make swatch URLs absolute
+  extractColors?($: cheerio.CheerioAPI, url: string): ProductVariant[];
+  // URL is passed but unused in this implementation (hence _url)
+  extractSizes?($: cheerio.CheerioAPI, url: string): ProductVariant[];
+  needsPuppeteer?: boolean;
+}
 
 // --- Helper Functions ---
 function cleanText(text: string | undefined): string {
@@ -358,30 +374,50 @@ const aymStudioExtractor: SiteExtractor = {
     return sizes;
   },
 };
-
 // ==========================================================
 // FIX: GianaWorld Extractor v6 (Targeting window JSON Object)
 // ==========================================================
+
+// Define interfaces for the expected data structure
+interface OrdersifyBISVariant {
+  available: boolean;
+  price: number;
+  featured_image?: { src: string };
+  option1?: string;
+  option2?: string;
+  option3?: string;
+  [key: `option${number}`]: string | undefined;
+}
+
+interface OrdersifyBISProduct {
+  title?: string;
+  vendor?: string;
+  price?: number;
+  images?: string[];
+  media?: Array<{ src: string }>;
+  options?: string[];
+  variants?: OrdersifyBISVariant[];
+}
+
 const gianaWorldExtractor: SiteExtractor = {
   needsPuppeteer: false,
+
   extractTitle($) {
-    // Try window product data first
     try {
       const scriptContent = $(
         'script:contains("window.ORDERSIFY_BIS.product =")',
       ).html();
       if (scriptContent) {
-        // Safely extract the JSON part
         const jsonMatch = scriptContent.match(
-          /window\.ORDERSIFY_BIS\.product = ({.*?});/s,
+          /window\.ORDERSIFY_BIS\.product = ({[\s\S]*?});/,
         );
         if (jsonMatch && jsonMatch[1]) {
-          // Use vm.runInNewContext for safer evaluation than eval
-          const sandbox = {};
+          const sandbox: { productData?: OrdersifyBISProduct } = {
+            productData: undefined,
+          };
           vm.runInNewContext(`productData = ${jsonMatch[1]}`, sandbox);
-          // @ts-ignore
           const productData = sandbox.productData;
-          if (productData && productData.title) {
+          if (productData?.title) {
             console.log("[Giana Extractor] Title found via window JSON.");
             return cleanText(productData.title);
           }
@@ -393,7 +429,7 @@ const gianaWorldExtractor: SiteExtractor = {
         e,
       );
     }
-    // Fallback to ld+json and H1
+
     try {
       const scriptContent = $('script[type="application/ld+json"]').html();
       if (scriptContent) {
@@ -401,6 +437,7 @@ const gianaWorldExtractor: SiteExtractor = {
         if (jsonData.name) return cleanText(jsonData.name);
       }
     } catch (e) {}
+
     return (
       cleanText(
         $("h1.product-title, h1.product_title, h1[itemprop='name']")
@@ -409,24 +446,26 @@ const gianaWorldExtractor: SiteExtractor = {
       ) || null
     );
   },
+
   extractBrand($) {
-    // Try window product data first
+    let brand: string | null = null;
+
     try {
       const scriptContent = $(
         'script:contains("window.ORDERSIFY_BIS.product =")',
       ).html();
       if (scriptContent) {
         const jsonMatch = scriptContent.match(
-          /window\.ORDERSIFY_BIS\.product = ({.*?});/s,
+          /window\.ORDERSIFY_BIS\.product = ({[\s\S]*?});/,
         );
         if (jsonMatch && jsonMatch[1]) {
-          const sandbox = {};
+          const sandbox: { productData?: OrdersifyBISProduct } = {
+            productData: undefined,
+          };
           vm.runInNewContext(`productData = ${jsonMatch[1]}`, sandbox);
-          // @ts-ignore
           const productData = sandbox.productData;
           if (
-            productData &&
-            productData.vendor &&
+            productData?.vendor &&
             productData.vendor !== "OurWeWeWe" &&
             productData.vendor.toLowerCase() !== "shopify"
           ) {
@@ -441,11 +480,11 @@ const gianaWorldExtractor: SiteExtractor = {
         e,
       );
     }
-    // Fallback using previous robust logic
-    let brand: string | undefined = undefined;
+
     try {
       const siteName = $('meta[property="og:site_name"]').attr("content");
       if (siteName && siteName.toUpperCase() === "GIANA") return "GIANA";
+
       const scriptContent = $('script[type="application/ld+json"]').html();
       if (scriptContent) {
         const jsonData = JSON.parse(scriptContent);
@@ -465,6 +504,7 @@ const gianaWorldExtractor: SiteExtractor = {
         e,
       );
     }
+
     if (!brand || brand === "OurWeWeWe" || brand?.toLowerCase() === "shopify") {
       brand = cleanText(
         $(
@@ -474,34 +514,38 @@ const gianaWorldExtractor: SiteExtractor = {
           .text(),
       );
     }
+
     if (!brand || brand === "OurWeWeWe" || brand?.toLowerCase() === "shopify") {
       const pageText = $("body").text();
       if (pageText.includes("GIANA")) return "GIANA";
     }
-    // Final check: Default to GIANA if nothing else specific was found
+
     return brand && brand !== "OurWeWeWe" && brand.toLowerCase() !== "shopify"
       ? brand.trim()
       : "GIANA";
   },
+
   extractPrice($, url) {
-    // Try window product data first (specifically variant price, as main price might vary)
     try {
       const scriptContent = $(
         'script:contains("window.ORDERSIFY_BIS.product =")',
       ).html();
       if (scriptContent) {
         const jsonMatch = scriptContent.match(
-          /window\.ORDERSIFY_BIS\.product = ({.*?});/s,
+          /window\.ORDERSIFY_BIS\.product = ({[\s\S]*?});/,
         );
         if (jsonMatch && jsonMatch[1]) {
-          const sandbox = {};
+          const sandbox: { productData?: OrdersifyBISProduct } = {
+            productData: undefined,
+          };
           vm.runInNewContext(`productData = ${jsonMatch[1]}`, sandbox);
-          // @ts-ignore
           const productData = sandbox.productData;
+
           const firstAvailableVariant = productData?.variants?.find(
-            (v: any) => v.available,
+            (v: OrdersifyBISVariant) => v.available,
           );
-          if (firstAvailableVariant && firstAvailableVariant.price) {
+
+          if (firstAvailableVariant?.price) {
             console.log(
               "[Giana Extractor] Price found via window JSON (first available variant).",
             );
@@ -514,7 +558,7 @@ const gianaWorldExtractor: SiteExtractor = {
               price: priceInCents / 100,
               currency: getCurrencySymbol(currencyCode),
             };
-          } else if (productData && productData.price) {
+          } else if (productData?.price) {
             console.log(
               "[Giana Extractor] Price found via window JSON (main product price).",
             );
@@ -536,7 +580,7 @@ const gianaWorldExtractor: SiteExtractor = {
         e,
       );
     }
-    // Fallback using previous robust logic
+
     try {
       const scriptContent = $('script[type="application/ld+json"]').html();
       if (scriptContent) {
@@ -555,6 +599,7 @@ const gianaWorldExtractor: SiteExtractor = {
         e,
       );
     }
+
     const currencyMeta = $('meta[property="og:price:currency"]').attr(
       "content",
     );
@@ -564,6 +609,7 @@ const gianaWorldExtractor: SiteExtractor = {
         price: parseFloat(priceMeta),
         currency: getCurrencySymbol(currencyMeta),
       };
+
     let priceText = cleanText(
       $(
         ".price__sale .price-item--sale, .product-single__price--on-sale .money",
@@ -582,30 +628,39 @@ const gianaWorldExtractor: SiteExtractor = {
     if (!priceText)
       priceText = cleanText($("span[data-product-price]").first().text());
     if (!priceText) return null;
+
     let currency = currencyMeta
       ? getCurrencySymbol(currencyMeta)
       : detectCurrency(priceText, url);
     return { price: parsePrice(priceText), currency: currency };
   },
+
   extractImages($, baseUrl) {
     const images: string[] = [];
     const seenUrls = new Set<string>();
     let foundJsonImages = false;
+
     try {
       const scriptContent = $(
         'script:contains("window.ORDERSIFY_BIS.product =")',
       ).html();
       if (scriptContent) {
         const jsonMatch = scriptContent.match(
-          /window\.ORDERSIFY_BIS\.product = ({.*?});/s,
+          /window\.ORDERSIFY_BIS\.product = ({[\s\S]*?});/,
         );
         if (jsonMatch && jsonMatch[1]) {
-          const sandbox = {};
+          const sandbox: { productData?: OrdersifyBISProduct } = {
+            productData: undefined,
+          };
           vm.runInNewContext(`productData = ${jsonMatch[1]}`, sandbox);
-          // @ts-ignore
           const productData = sandbox.productData;
+
           const imageSources =
-            productData?.images || productData?.media?.map((m: any) => m.src);
+            productData?.images ||
+            productData?.media
+              ?.map((m: { src: string }) => m.src)
+              .filter(Boolean);
+
           if (imageSources && Array.isArray(imageSources)) {
             imageSources.forEach((imgSrc: string) => {
               if (imgSrc && typeof imgSrc === "string") {
@@ -627,6 +682,7 @@ const gianaWorldExtractor: SiteExtractor = {
         e,
       );
     }
+
     if (foundJsonImages) {
       console.log("[Giana Extractor] Images found via window JSON.");
       return images
@@ -639,6 +695,9 @@ const gianaWorldExtractor: SiteExtractor = {
     console.log(
       "[Giana Extractor] Window JSON image extraction failed, falling back...",
     );
+
+    // ... rest of the extractImages method remains the same ...
+    // (The HTML fallback code doesn't need type changes)
     $(
       'script[type="application/json"][data-product-json], script#ProductJson-product-template',
     ).each((_, el) => {
@@ -646,7 +705,7 @@ const gianaWorldExtractor: SiteExtractor = {
       try {
         const jsonData = JSON.parse($(el).html() || "{}");
         const productData = jsonData.product || jsonData;
-        const mediaArray = productData.media;
+        const mediaArray = productData?.media;
         if (mediaArray && Array.isArray(mediaArray)) {
           mediaArray.forEach((mediaItem: any) => {
             if (mediaItem.src && typeof mediaItem.src === "string") {
@@ -658,7 +717,7 @@ const gianaWorldExtractor: SiteExtractor = {
               }
             }
           });
-        } else if (productData.images && Array.isArray(productData.images)) {
+        } else if (productData?.images && Array.isArray(productData.images)) {
           productData.images.forEach((imgSrc: string) => {
             const abs = makeAbsoluteUrl(imgSrc, baseUrl);
             if (abs && !seenUrls.has(abs)) {
@@ -670,12 +729,14 @@ const gianaWorldExtractor: SiteExtractor = {
         }
       } catch (e) {}
     });
+
     if (images.length > 0)
       return images
         .map((img) =>
           img.startsWith("http:") ? img.replace("http:", "https:") : img,
         )
         .slice(0, 5);
+
     if (images.length === 0) {
       try {
         const scriptContent = $('script[type="application/ld+json"]').html();
@@ -700,6 +761,7 @@ const gianaWorldExtractor: SiteExtractor = {
         }
       } catch (e) {}
     }
+
     if (images.length === 0) {
       const mainImageSelectors = [
         ".product__media-list img",
@@ -723,31 +785,34 @@ const gianaWorldExtractor: SiteExtractor = {
         if (images.length > 0) break;
       }
     }
+
     const httpsImages = images.map((img) =>
       img.startsWith("http:") ? img.replace("http:", "https:") : img,
     );
     return httpsImages.slice(0, 5);
   },
+
   extractColors($, url) {
     const colors: ProductVariant[] = [];
     const foundNames = new Set<string>();
     let jsonDataParsed = false;
 
-    // Try window product JSON first
     try {
       const scriptContent = $(
         'script:contains("window.ORDERSIFY_BIS.product =")',
       ).html();
       if (scriptContent) {
         const jsonMatch = scriptContent.match(
-          /window\.ORDERSIFY_BIS\.product = ({.*?});/s,
+          /window\.ORDERSIFY_BIS\.product = ({[\s\S]*?});/,
         );
         if (jsonMatch && jsonMatch[1]) {
-          const sandbox = {};
+          const sandbox: { productData?: OrdersifyBISProduct } = {
+            productData: undefined,
+          };
           vm.runInNewContext(`productData = ${jsonMatch[1]}`, sandbox);
-          // @ts-ignore
           const productData = sandbox.productData;
-          const colorOptionIndex = productData.options?.findIndex(
+
+          const colorOptionIndex = productData?.options?.findIndex(
             (opt: string) =>
               typeof opt === "string" && opt.toLowerCase() === "color",
           );
@@ -755,23 +820,25 @@ const gianaWorldExtractor: SiteExtractor = {
           if (
             colorOptionIndex !== undefined &&
             colorOptionIndex !== -1 &&
-            productData.variants &&
+            productData?.variants &&
             Array.isArray(productData.variants)
           ) {
-            productData.variants.forEach((variant: any) => {
-              const colorName = variant[`option${colorOptionIndex + 1}`]; // e.g., option2 if 'Color' is the 2nd option
+            productData.variants.forEach((variant: OrdersifyBISVariant) => {
+              const colorName = variant[`option${colorOptionIndex + 1}`];
               if (
                 colorName &&
                 typeof colorName === "string" &&
                 !foundNames.has(colorName)
               ) {
-                let swatchUrl: string | undefined = variant.featured_image?.src; // Prioritize variant's featured image
+                let swatchUrl: string | undefined = variant.featured_image?.src;
                 if (swatchUrl && swatchUrl.startsWith("//"))
                   swatchUrl = "https:" + swatchUrl;
                 colors.push({
                   name: cleanText(colorName),
                   available: variant.available,
-                  swatch: makeAbsoluteUrl(swatchUrl, url),
+                  swatch: swatchUrl
+                    ? makeAbsoluteUrl(swatchUrl, url)
+                    : undefined,
                 });
                 foundNames.add(colorName);
                 jsonDataParsed = true;
@@ -794,14 +861,14 @@ const gianaWorldExtractor: SiteExtractor = {
       return colors;
     }
 
-    // Fallback to HTML <select> or labels
     console.log(
       "[Giana Extractor] Window JSON Color extraction failed, falling back to HTML.",
     );
-    // --- Start of HTML Fallback for Colors ---
+
+    // HTML fallback code remains the same but with type safety fixes
     $(
       'select[name*="option"], select[id*="Color"], select[data-option*="color"]',
-    ).each((_, selectEl) => {
+    ).each((i, selectEl) => {
       const $select = $(selectEl);
       const selectId = $select.attr("id");
       const $label = selectId
@@ -809,31 +876,31 @@ const gianaWorldExtractor: SiteExtractor = {
         : $select.siblings("label");
       const labelText = $label.text();
       const selectName = $select.attr("name");
-
       if (
         labelText.toLowerCase().includes("color") ||
         selectName?.toLowerCase().includes("color")
       ) {
         console.log(
-          `[Giana Extractor HTML Fallback] Found potential color select: id=${selectId}, name=${selectName}`,
+          `[Giana Extractor HTML Fallback] Found potential color select #${i}: id=${selectId}, name=${selectName}`,
         );
-        $select.find("option").each((_, optionEl) => {
+        $select.find("option").each((optIdx, optionEl) => {
           const $option = $(optionEl);
-          const colorName = cleanText(
-            $option.val()?.toString() || $option.text(),
-          );
+          const optionValue = $option.val()?.toString() || "";
+          const colorName = cleanText(optionValue || $option.text());
           const disabled = $option.prop("disabled");
           const available = !disabled;
           const optionText = $option.text().toLowerCase();
           const isSoldOut =
             optionText.includes("sold out") ||
             optionText.includes("unavailable");
-
           if (
             colorName &&
             !colorName.toLowerCase().startsWith("select") &&
             !foundNames.has(colorName)
           ) {
+            console.log(
+              `[Giana Extractor HTML Fallback - Colors] Found color option #${optIdx}: ${colorName}, Available: ${available && !isSoldOut}`,
+            );
             colors.push({
               name: colorName,
               available: available && !isSoldOut,
@@ -842,79 +909,84 @@ const gianaWorldExtractor: SiteExtractor = {
             foundNames.add(colorName);
           }
         });
-        if (colors.length > 0) return false; // Stop searching selects if we found colors
+        if (colors.length > 0) return false;
       }
     });
-    // Fallback to labels/radios if select failed
+
     if (colors.length === 0) {
       console.log(
         "[Giana Extractor HTML Fallback] <select> failed for colors, trying labels/radios...",
       );
       $(
         'fieldset legend:contains("Color") + ul label, fieldset[data-option-name*="color" i] label, div.product-form__swatches--colour label.product-form__swatch, label.color-swatch',
-      ).each((_, el) => {
-        // Added original selectors back
+      ).each((i, el) => {
+        const $el = $(el);
+        const inputValue = $el.find("input").val()?.toString() || "";
         const colorName = cleanText(
-          $(el).text().trim() ||
-            $(el).find("input").val()?.toString() ||
-            $(el).find(".swatch-element__tooltip").text() ||
-            $(el).find("span.product-form__swatch-value").text(),
-        ); // Added original span selector
-        const inputId = $(el).attr("for");
-        const input = inputId ? $(`#${inputId}`) : $(el).find("input");
+          $el.text().trim() ||
+            inputValue ||
+            $el.find(".swatch-element__tooltip").text() ||
+            $el.find("span.product-form__swatch-value").text(),
+        );
+        const inputId = $el.attr("for");
+        const input = inputId ? $(`#${inputId}`) : $el.find("input");
         let available = !(
           input.prop("disabled") ||
-          $(el).hasClass("disabled") ||
-          $(el).hasClass("sold-out") ||
-          $(el).hasClass("is-disabled") ||
-          $(el).find("span.product-form__swatch-value--sold-out").length > 0
-        ); // Added original sold-out check
+          $el.hasClass("disabled") ||
+          $el.hasClass("sold-out") ||
+          $el.hasClass("is-disabled") ||
+          $el.find("span.product-form__swatch-value--sold-out").length > 0
+        );
         let swatch: string | undefined =
-          $(el).find("img").attr("src") ||
-          $(el).find(".swatch__color-image").css("background-image"); // Added original selectors
+          $el.find("img").attr("src") ||
+          $el.find(".swatch__color-image").css("background-image");
         if (swatch && swatch.startsWith('url("'))
           swatch = swatch.replace('url("', "").replace('")', "");
-
         if (
           colorName &&
           colorName.toLowerCase() !== "color" &&
           !foundNames.has(colorName)
         ) {
+          console.log(
+            `[Giana Extractor HTML Fallback - Colors] Found color label/radio #${i}: ${colorName}, Available: ${available}`,
+          );
           colors.push({
             name: colorName,
-            swatch: makeAbsoluteUrl(swatch, url),
+            swatch: swatch ? makeAbsoluteUrl(swatch, url) : undefined,
             available: available,
-          }); // Pass url to makeAbsoluteUrl
+          });
           foundNames.add(colorName);
         }
       });
     }
-    // --- End of HTML Fallback ---
+
     console.log(
       `[Giana Extractor] Found ${colors.length} colors via HTML fallback.`,
     );
     return colors;
   },
-  extractSizes($, url) {
+
+  extractSizes($, _url) {
     const sizes: ProductVariant[] = [];
     const foundNames = new Set<string>();
     let jsonDataParsed = false;
 
-    // Try window product JSON first
     try {
       const scriptContent = $(
         'script:contains("window.ORDERSIFY_BIS.product =")',
       ).html();
       if (scriptContent) {
         const jsonMatch = scriptContent.match(
-          /window\.ORDERSIFY_BIS\.product = ({.*?});/s,
+          /window\.ORDERSIFY_BIS\.product = ({[\s\S]*?});/,
         );
         if (jsonMatch && jsonMatch[1]) {
-          const sandbox = {};
+          const sandbox: { productData?: OrdersifyBISProduct } = {
+            productData: undefined,
+          };
           vm.runInNewContext(`productData = ${jsonMatch[1]}`, sandbox);
-          // @ts-ignore
           const productData = sandbox.productData;
-          const sizeOptionIndex = productData.options?.findIndex(
+
+          const sizeOptionIndex = productData?.options?.findIndex(
             (opt: string) =>
               typeof opt === "string" && opt.toLowerCase() === "size",
           );
@@ -922,10 +994,10 @@ const gianaWorldExtractor: SiteExtractor = {
           if (
             sizeOptionIndex !== undefined &&
             sizeOptionIndex !== -1 &&
-            productData.variants &&
+            productData?.variants &&
             Array.isArray(productData.variants)
           ) {
-            productData.variants.forEach((variant: any) => {
+            productData.variants.forEach((variant: OrdersifyBISVariant) => {
               const sizeName = variant[`option${sizeOptionIndex + 1}`];
               if (
                 sizeName &&
@@ -957,14 +1029,14 @@ const gianaWorldExtractor: SiteExtractor = {
       return sizes;
     }
 
-    // Fallback to HTML <select> or labels
     console.log(
       "[Giana Extractor] Window JSON Size extraction failed, falling back to HTML.",
     );
-    // --- Start of HTML Fallback for Sizes ---
+
+    // HTML fallback for sizes with type safety
     $(
       'select[name*="option"], select[id*="Size"], select[data-option*="size"]',
-    ).each((_, selectEl) => {
+    ).each((i, selectEl) => {
       const $select = $(selectEl);
       const selectId = $select.attr("id");
       const $label = selectId
@@ -972,75 +1044,77 @@ const gianaWorldExtractor: SiteExtractor = {
         : $select.siblings("label");
       const labelText = $label.text();
       const selectName = $select.attr("name");
-
       if (
         labelText.toLowerCase().includes("size") ||
         selectName?.toLowerCase().includes("size")
       ) {
         console.log(
-          `[Giana Extractor HTML Fallback] Found potential size select: id=${selectId}, name=${selectName}`,
+          `[Giana Extractor HTML Fallback] Found potential size select #${i}: id=${selectId}, name=${selectName}`,
         );
-        $select.find("option").each((_, optionEl) => {
+        $select.find("option").each((optIdx, optionEl) => {
           const $option = $(optionEl);
-          const sizeName = cleanText(
-            $option.val()?.toString() || $option.text(),
-          );
+          const optionValue = $option.val()?.toString() || "";
+          const sizeName = cleanText(optionValue || $option.text());
           const disabled = $option.prop("disabled");
           const available = !disabled;
           const optionText = $option.text().toLowerCase();
           const isSoldOut =
             optionText.includes("sold out") ||
             optionText.includes("unavailable");
-
           if (
             sizeName &&
             !sizeName.toLowerCase().startsWith("select") &&
             !foundNames.has(sizeName)
           ) {
+            console.log(
+              `[Giana Extractor HTML Fallback - Sizes] Found size option #${optIdx}: ${sizeName}, Available: ${available && !isSoldOut}`,
+            );
             sizes.push({ name: sizeName, available: available && !isSoldOut });
             foundNames.add(sizeName);
           }
         });
-        if (sizes.length > 0) return false; // Stop searching selects
+        if (sizes.length > 0) return false;
       }
     });
 
-    // Fallback to labels/radios if select failed
     if (sizes.length === 0) {
       console.log(
         "[Giana Extractor HTML Fallback] <select> failed for sizes, trying labels/radios...",
       );
       $(
         'fieldset legend:contains("Size") + ul label, fieldset[data-option-name*="size" i] label, div.product-form__swatches--size label.product-form__swatch, label.block-swatch',
-      ).each((_, el) => {
-        // Added original selectors back
+      ).each((i, el) => {
+        const $el = $(el);
+        const inputValue = $el.find("input").val()?.toString() || "";
         const sizeName = cleanText(
-          $(el).text().trim() ||
-            $(el).find("input").val()?.toString() ||
-            $(el).find(".swatch-element__tooltip").text() ||
-            $(el).find("span.product-form__swatch-value").text(),
-        ); // Added original span selector
-        const inputId = $(el).attr("for");
-        const input = inputId ? $(`#${inputId}`) : $(el).find("input");
+          $el.text().trim() ||
+            inputValue ||
+            $el.find(".swatch-element__tooltip").text() ||
+            $el.find("span.product-form__swatch-value").text(),
+        );
+        const inputId = $el.attr("for");
+        const input = inputId ? $(`#${inputId}`) : $el.find("input");
         let available = !(
           input.prop("disabled") ||
-          $(el).hasClass("disabled") ||
-          $(el).hasClass("sold-out") ||
-          $(el).hasClass("is-disabled") ||
-          $(el).find("span.product-form__swatch-value--sold-out").length > 0
-        ); // Added original sold-out check
-
+          $el.hasClass("disabled") ||
+          $el.hasClass("sold-out") ||
+          $el.hasClass("is-disabled") ||
+          $el.find("span.product-form__swatch-value--sold-out").length > 0
+        );
         if (
           sizeName &&
           sizeName.toLowerCase() !== "size" &&
           !foundNames.has(sizeName)
         ) {
+          console.log(
+            `[Giana Extractor HTML Fallback - Sizes] Found size label/radio #${i}: ${sizeName}, Available: ${available}`,
+          );
           sizes.push({ name: sizeName, available: available });
           foundNames.add(sizeName);
         }
       });
     }
-    // --- End of HTML Fallback ---
+
     console.log(
       `[Giana Extractor] Found ${sizes.length} sizes via HTML fallback.`,
     );
