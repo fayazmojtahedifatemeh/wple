@@ -121,9 +121,7 @@ export function AppSidebar({
   };
 
   return (
-    // Add fixed width, ensure block display
-    <Sidebar className="border-r border-sidebar-border hidden md:block w-64 shrink-0">
-      {/* Add flex, full height, and scrolling */}
+    <Sidebar className="border-r border-sidebar-border">
       <SidebarContent className="p-4 flex flex-col h-full overflow-y-auto">
         {/* Make group grow */}
         <SidebarGroup className="flex-1">
