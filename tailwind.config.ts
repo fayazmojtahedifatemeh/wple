@@ -1,20 +1,42 @@
 import type { Config } from "tailwindcss";
+// Import the plugins using import
+import animatePlugin from "tailwindcss-animate";
+import typographyPlugin from "@tailwindcss/typography";
+import scrollbarPlugin from "tailwind-scrollbar";
 
-export default {
+// Removed 'satisfies Config'
+const config = {
   darkMode: ["class"],
-  content: ["./client/index.html", "./client/src/**/*.{js,jsx,ts,tsx}"],
+  content: ["./client/index.html", "./client/src/**/*.{js,jsx,ts,tsx}"], // Keep this for your structure
   theme: {
     extend: {
+      // FIX: Explicitly map font families
+      fontFamily: {
+        // Map --font-sans from index.css ('Inter', fallback system fonts)
+        sans: [
+          "Inter",
+          "-apple-system",
+          "BlinkMacSystemFont",
+          '"Segoe UI"',
+          "sans-serif",
+        ],
+        // Map --font-serif (add a fallback if you define --font-serif in index.css)
+        serif: ["var(--font-serif)", "serif"],
+        // Map --font-mono from index.css ('JetBrains Mono', fallback monospace fonts)
+        mono: ['"JetBrains Mono"', "Menlo", "monospace"],
+        // Map --font-display from index.css ('Plus Jakarta Sans', fallback Inter/sans-serif)
+        display: ['"Plus Jakarta Sans"', "Inter", "sans-serif"],
+      },
+      // Keep your existing theme extensions
       borderRadius: {
-        lg: ".5625rem", /* 9px */
-        md: ".375rem", /* 6px */
-        sm: ".1875rem", /* 3px */
-        xl: "1rem", /* 16px */
-        "2xl": "1.25rem", /* 20px */
-        "3xl": "1.5rem", /* 24px */
+        lg: ".5625rem",
+        md: ".375rem",
+        sm: ".1875rem",
+        xl: "1rem",
+        "2xl": "1.25rem",
+        "3xl": "1.5rem",
       },
       colors: {
-        // Flat / base colors (regular buttons)
         background: "hsl(var(--background) / <alpha-value>)",
         foreground: "hsl(var(--foreground) / <alpha-value>)",
         border: "hsl(var(--border) / <alpha-value>)",
@@ -76,7 +98,7 @@ export default {
         "sidebar-accent": {
           DEFAULT: "hsl(var(--sidebar-accent) / <alpha-value>)",
           foreground: "hsl(var(--sidebar-accent-foreground) / <alpha-value>)",
-          border: "var(--sidebar-accent-border)"
+          border: "var(--sidebar-accent-border)",
         },
         status: {
           online: "rgb(34 197 94)",
@@ -84,11 +106,6 @@ export default {
           busy: "rgb(239 68 68)",
           offline: "rgb(156 163 175)",
         },
-      },
-      fontFamily: {
-        sans: ["var(--font-sans)"],
-        serif: ["var(--font-serif)"],
-        mono: ["var(--font-mono)"],
       },
       keyframes: {
         "accordion-down": {
@@ -106,5 +123,8 @@ export default {
       },
     },
   },
-  plugins: [require("tailwindcss-animate"), require("@tailwindcss/typography")],
-} satisfies Config;
+  // Correctly placed plugins array using imports
+  plugins: [animatePlugin, typographyPlugin, scrollbarPlugin],
+}; // Removed satisfies Config
+
+export default config;

@@ -1,4 +1,10 @@
-import type { WishlistItem, InsertWishlistItem } from "@shared/schema";
+// FIX: Import all our new shared types
+import type {
+  WishlistItem,
+  InsertWishlistItem,
+  ScrapedProduct,
+  InsertScrapedProduct,
+} from "@shared/schema";
 
 const API_BASE = "/api";
 
@@ -10,31 +16,42 @@ export async function fetchWishlistItems(): Promise<WishlistItem[]> {
   return response.json();
 }
 
-export async function scrapeProduct(url: string): Promise<any> {
+export async function scrapeProduct(url: string): Promise<ScrapedProduct> {
   const response = await fetch(`${API_BASE}/scrape`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ url }),
   });
+
+  const data = await response.json(); // Read the JSON body
   if (!response.ok) {
-    throw new Error("Failed to scrape product");
+    // Pass the specific error message from the server
+    throw new Error(data.error || "Failed to scrape product");
   }
-  return response.json();
+  return data;
 }
 
-export async function addWishlistItem(data: { url: string; manualCategory?: string; manualSubcategory?: string }): Promise<WishlistItem> {
+export async function addWishlistItem(
+  // FIX: This now takes the 'InsertScrapedProduct' type
+  data: InsertScrapedProduct,
+): Promise<WishlistItem> {
   const response = await fetch(`${API_BASE}/wishlist`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(data),
+    body: JSON.stringify(data), // Send the entire object
   });
+
+  const resData = await response.json();
   if (!response.ok) {
-    throw new Error("Failed to add wishlist item");
+    throw new Error(resData.error || "Failed to add wishlist item");
   }
-  return response.json();
+  return resData;
 }
 
-export async function updateWishlistItem(id: string, updates: Partial<WishlistItem>): Promise<WishlistItem> {
+export async function updateWishlistItem(
+  id: string,
+  updates: Partial<WishlistItem>,
+): Promise<WishlistItem> {
   const response = await fetch(`${API_BASE}/wishlist/${id}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },

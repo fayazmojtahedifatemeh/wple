@@ -3,7 +3,11 @@ import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { scrapeProductFromUrl } from "./scraper";
 import { categorizeProduct } from "./gemini";
-import { insertWishlistItemSchema, insertCustomCategorySchema } from "@shared/schema";
+import {
+  insertWishlistItemSchema,
+  insertCustomCategorySchema,
+  type InsertScrapedProduct, // FIX: Import new type
+} from "@shared/schema";
 import { z } from "zod";
 
 export async function registerRoutes(app: Express): Promise<Server> {
@@ -19,12 +23,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(scrapedProduct);
     } catch (error) {
       console.error("Scraping error:", error);
-      res.status(500).json({ error: "Failed to scrape product" });
+      const message =
+        error instanceof Error ? error.message : "Failed to scrape product";
+      res.status(500).json({ error: message });
     }
   });
 
   // Get all wishlist items
   app.get("/api/wishlist", async (req, res) => {
+    // ... (no changes)
     try {
       const items = await storage.getWishlistItems();
       res.json(items);
@@ -36,12 +43,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Get wishlist items by category
   app.get("/api/wishlist/category/:category", async (req, res) => {
+    // ... (no changes)
     try {
       const { category } = req.params;
       const { subcategory } = req.query;
       const items = await storage.getWishlistItemsByCategory(
         category,
-        subcategory as string | undefined
+        subcategory as string | undefined,
       );
       res.json(items);
     } catch (error) {
@@ -53,13 +61,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Add wishlist item (with scraping and AI categorization)
   app.post("/api/wishlist", async (req, res) => {
     try {
-      const { url, manualCategory, manualSubcategory } = req.body;
+      const { manualCategory, manualSubcategory, ...scrapedProduct } =
+        req.body as InsertScrapedProduct;
 
+      const url = scrapedProduct.url;
       if (!url) {
-        return res.status(400).json({ error: "URL is required" });
+        return res
+          .status(400)
+          .json({ error: "URL is required in product data" });
       }
-
-      const scrapedProduct = await scrapeProductFromUrl(url);
 
       let category = manualCategory || "Extra";
       let subcategory = manualSubcategory;
@@ -69,34 +79,60 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const aiCategory = await categorizeProduct(
             scrapedProduct.title,
             scrapedProduct.brand,
-            url
+            url,
           );
           category = aiCategory.category;
-          subcategory = aiCategory.subcategory;
+          subcategory = aiCategory.subcategory || undefined;
         } catch (error) {
           console.error("Failed to categorize product:", error);
         }
       }
 
+      const colorStrings = scrapedProduct.colors?.map((c) => c.name);
+      const sizeStrings = scrapedProduct.sizes?.map((s) => s.name);
+
+      // FIX: Ensure price is formatted as a string for the 'numeric' type validation
+      // Your database schema likely expects a string here, even though you calculate with numbers.
+      const priceAsString = scrapedProduct.price.toFixed(2);
+
       const itemData = {
         ...scrapedProduct,
+        price: priceAsString, // Use the formatted string price
         category,
         subcategory,
+        colors: colorStrings,
+        sizes: sizeStrings,
       };
 
+      // FIX: Add detailed logging BEFORE validation
+      console.log("--- Data Prepared for Validation ---");
+      console.log(JSON.stringify(itemData, null, 2));
+      console.log("-----------------------------------");
+
+      // This is where the "Invalid item data" error originates
       const validatedItem = insertWishlistItemSchema.parse(itemData);
+
+      console.log("--- Validation Successful ---");
+
       const item = await storage.createWishlistItem(validatedItem);
 
       res.json(item);
     } catch (error) {
       if (error instanceof z.ZodError) {
-        return res.status(400).json({ error: "Invalid item data", details: error.errors });
+        // FIX: Log the specific Zod validation errors
+        console.error("--- Zod Validation Error Details ---");
+        console.error(JSON.stringify(error.errors, null, 2));
+        console.error("-----------------------------------");
+        return res
+          .status(400)
+          .json({ error: "Invalid item data", details: error.errors });
       }
       console.error("Error adding wishlist item:", error);
       res.status(500).json({ error: "Failed to add wishlist item" });
     }
   });
 
+  // ... (The rest of your routes remain unchanged) ...
   // Update wishlist item
   app.patch("/api/wishlist/:id", async (req, res) => {
     try {
@@ -140,8 +176,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ error: "Failed to update price" });
       }
 
+      const colorStrings = scrapedProduct.colors?.map((c) => c.name);
+      const sizeStrings = scrapedProduct.sizes?.map((s) => s.name);
+
       await storage.updateWishlistItem(id, {
         inStock: scrapedProduct.inStock,
+        colors: colorStrings,
+        sizes: sizeStrings,
       });
 
       res.json(updatedItem);
@@ -161,6 +202,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         try {
           const scrapedProduct = await scrapeProductFromUrl(item.url);
 
+          const colorStrings = scrapedProduct.colors?.map((c) => c.name);
+          const sizeStrings = scrapedProduct.sizes?.map((s) => s.name);
+
           const priceEntry = {
             price: scrapedProduct.price,
             currency: scrapedProduct.currency,
@@ -170,6 +214,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           await storage.addPriceHistoryEntry(item.id, priceEntry);
           await storage.updateWishlistItem(item.id, {
             inStock: scrapedProduct.inStock,
+            colors: colorStrings,
+            sizes: sizeStrings,
           });
 
           updates.push({ id: item.id, success: true });
@@ -222,7 +268,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(category);
     } catch (error) {
       if (error instanceof z.ZodError) {
-        return res.status(400).json({ error: "Invalid category data", details: error.errors });
+        return res
+          .status(400)
+          .json({ error: "Invalid category data", details: error.errors });
       }
       console.error("Error creating category:", error);
       res.status(500).json({ error: "Failed to create category" });

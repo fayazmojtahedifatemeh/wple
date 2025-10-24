@@ -1,10 +1,20 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, numeric, boolean, jsonb, timestamp } from "drizzle-orm/pg-core";
+import {
+  pgTable,
+  text,
+  varchar,
+  numeric,
+  boolean,
+  jsonb,
+  timestamp,
+} from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
 export const users = pgTable("users", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  id: varchar("id")
+    .primaryKey()
+    .default(sql`gen_random_uuid()`),
   username: text("username").notNull().unique(),
   password: text("password").notNull(),
 });
@@ -26,22 +36,71 @@ export const priceHistoryEntrySchema = z.object({
 
 export type PriceHistoryEntry = z.infer<typeof priceHistoryEntrySchema>;
 
+//
+// ----------------- START OF NEW CODE -----------------
+//
+// These new types will be shared by the scraper, the server, and the frontend
+export const productVariantSchema = z.object({
+  name: z.string(),
+  swatch: z.string().optional(),
+  available: z.boolean().optional(),
+});
+
+export type ProductVariant = z.infer<typeof productVariantSchema>;
+
+export const scrapedProductSchema = z.object({
+  title: z.string(),
+  price: z.number(),
+  currency: z.string(),
+  images: z.array(z.string()),
+  brand: z.string().optional(),
+  inStock: z.boolean(),
+  colors: z.array(productVariantSchema).optional(),
+  sizes: z.array(productVariantSchema).optional(),
+  url: z.string(),
+});
+
+export type ScrapedProduct = z.infer<typeof scrapedProductSchema>;
+
+// This is the type for the "Add Item" API call
+export const insertScrapedProductSchema = scrapedProductSchema.extend({
+  manualCategory: z.string().optional(),
+  manualSubcategory: z.string().optional(),
+});
+
+export type InsertScrapedProduct = z.infer<typeof insertScrapedProductSchema>;
+//
+// ----------------- END OF NEW CODE -----------------
+//
+
 // Wishlist items
 export const wishlistItems = pgTable("wishlist_items", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  id: varchar("id")
+    .primaryKey()
+    .default(sql`gen_random_uuid()`),
   title: text("title").notNull(),
   brand: text("brand"),
   price: numeric("price", { precision: 10, scale: 2 }).notNull(),
   currency: text("currency").notNull().default("$"),
   url: text("url").notNull(),
-  images: text("images").array().notNull().default(sql`ARRAY[]::text[]`),
+  images: text("images")
+    .array()
+    .notNull()
+    .default(sql`ARRAY[]::text[]`),
   category: text("category").notNull().default("Extra"),
   subcategory: text("subcategory"),
   customCategoryId: varchar("custom_category_id"),
   inStock: boolean("in_stock").notNull().default(true),
-  colors: text("colors").array().default(sql`ARRAY[]::text[]`),
-  sizes: text("sizes").array().default(sql`ARRAY[]::text[]`),
-  priceHistory: jsonb("price_history").$type<PriceHistoryEntry[]>().notNull().default(sql`'[]'::jsonb`),
+  colors: text("colors")
+    .array()
+    .default(sql`ARRAY[]::text[]`), // Stays as string[]
+  sizes: text("sizes")
+    .array()
+    .default(sql`ARRAY[]::text[]`), // Stays as string[]
+  priceHistory: jsonb("price_history")
+    .$type<PriceHistoryEntry[]>()
+    .notNull()
+    .default(sql`'[]'::jsonb`),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
@@ -52,9 +111,11 @@ export const insertWishlistItemSchema = createInsertSchema(wishlistItems).omit({
   updatedAt: true,
 });
 
-export const updateWishlistItemSchema = insertWishlistItemSchema.partial().omit({
-  priceHistory: true,
-});
+export const updateWishlistItemSchema = insertWishlistItemSchema
+  .partial()
+  .omit({
+    priceHistory: true,
+  });
 
 export type InsertWishlistItem = z.infer<typeof insertWishlistItemSchema>;
 export type UpdateWishlistItem = z.infer<typeof updateWishlistItemSchema>;
@@ -62,13 +123,17 @@ export type WishlistItem = typeof wishlistItems.$inferSelect;
 
 // Custom categories
 export const customCategories = pgTable("custom_categories", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  id: varchar("id")
+    .primaryKey()
+    .default(sql`gen_random_uuid()`),
   name: text("name").notNull().unique(),
   icon: text("icon"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
-export const insertCustomCategorySchema = createInsertSchema(customCategories).omit({
+export const insertCustomCategorySchema = createInsertSchema(
+  customCategories,
+).omit({
   id: true,
   createdAt: true,
 });
