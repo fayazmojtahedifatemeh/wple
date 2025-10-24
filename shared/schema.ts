@@ -60,12 +60,17 @@ export const scrapedProductSchema = z.object({
   url: z.string(),
 });
 
+// Add this after your existing types, around line 60-70:
+// In shared/schema.ts - Add this with your other type definitions:
 export type ScrapedProduct = z.infer<typeof scrapedProductSchema>;
 
 // This is the type for the "Add Item" API call
+// In your shared/schema.ts, update the insert schema:
 export const insertScrapedProductSchema = scrapedProductSchema.extend({
   manualCategory: z.string().optional(),
   manualSubcategory: z.string().optional(),
+  selectedColor: z.string().optional(), // Add this
+  selectedSize: z.string().optional(), // Add this
 });
 
 export type InsertScrapedProduct = z.infer<typeof insertScrapedProductSchema>;

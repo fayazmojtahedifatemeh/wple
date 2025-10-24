@@ -1,6 +1,8 @@
-import type { ProductVariant } from "@shared/schema"; // From your 3:56 PM message
-import * as cheerio from "cheerio"; // From your 3:56 PM message
-import vm from "vm"; // From your 3:56 PM message
+import * as cheerio from "cheerio"; // From your 3:56 PM messag
+// Remove any problematic imports and use these instead:
+import { ProductVariant, ScrapedProduct } from "../shared/schema";
+import axios from "axios";
+import vm from "vm";
 
 // Interface for all extractors
 interface SiteExtractor {
@@ -1442,7 +1444,7 @@ function getExtractorForSite(url: string): SiteExtractor | null {
 export async function scrapeProductFromUrl(
   url: string,
 ): Promise<ScrapedProduct> {
-  let siteExtractor: SiteExtractor | null = null; // Defined outside try
+  let siteExtractor: SiteExtractor | null = null;
   try {
     siteExtractor = getExtractorForSite(url);
     console.log(`[Scraper] Starting scrape for: ${url}`);
@@ -1457,33 +1459,45 @@ export async function scrapeProductFromUrl(
 
     // --- Axios Request ---
     console.log(`[Scraper] Scraping ${new URL(url).hostname} with Axios...`);
-    const response = await axios.get(url, {
-      headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        Accept:
-          "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.9",
-        "Accept-Encoding": "gzip, deflate, br",
-        "Sec-Ch-Ua":
-          '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
-        "Sec-Ch-Ua-Mobile": "?0",
-        "Sec-Ch-Ua-Platform": '"Windows"',
-        "Sec-Fetch-Dest": "document",
-        "Sec-Fetch-Mode": "navigate",
-        "Sec-Fetch-Site": "none",
-        "Sec-Fetch-User": "?1",
-        "Upgrade-Insecure-Requests": "1",
-        Dnt: "1",
-      },
-      timeout: 20000,
-      maxRedirects: 5,
-    });
-    if (response.status < 200 || response.status >= 300)
+
+    let response;
+    try {
+      response = await axios.get(url, {
+        headers: {
+          "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+          Accept:
+            "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+          "Accept-Language": "en-US,en;q=0.9",
+          "Accept-Encoding": "gzip, deflate, br",
+          "Sec-Ch-Ua":
+            '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+          "Sec-Ch-Ua-Mobile": "?0",
+          "Sec-Ch-Ua-Platform": '"Windows"',
+          "Sec-Fetch-Dest": "document",
+          "Sec-Fetch-Mode": "navigate",
+          "Sec-Fetch-Site": "none",
+          "Sec-Fetch-User": "?1",
+          "Upgrade-Insecure-Requests": "1",
+          Dnt: "1",
+        },
+        timeout: 20000,
+        maxRedirects: 5,
+      });
+    } catch (axiosError: unknown) {
+      console.error('[Scraper] Axios request failed:', axiosError);
+      throw new Error(`Network request failed: ${axiosError instanceof Error ? axiosError.message : 'Unknown error'}`);
+    }
+
+    if (response.status < 200 || response.status >= 300) {
       throw new Error(`Request failed with status code ${response.status}`);
+    }
+
     const html = response.data;
     const $ = cheerio.load(html);
     // --- End Axios Request ---
+
+    // ... rest of your scraping logic
 
     let title: string | null = null;
     let priceData: { price: number; currency: string } | null = null;
