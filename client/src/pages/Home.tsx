@@ -1,16 +1,17 @@
-import React, { useState, useMemo } from "react"; // Added React import
+import React, { useState, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Plus, RefreshCw, Activity, Upload } from "lucide-react"; // Removed LayoutGrid
+import { Plus, RefreshCw, Activity, Upload, Menu } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ProductCard } from "@/components/ProductCard";
 import { ActivityFeedItem } from "@/components/ActivityFeedItem";
 import { AddItemModal } from "@/components/AddItemModal";
 import { CSVImportModal } from "@/components/CSVImportModal";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"; // Keep Tabs for Grid/Activity toggle
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { SidebarTrigger } from "@/components/ui/sidebar";
+import { ThemeToggle } from "@/components/ThemeToggle";
 import { fetchWishlistItems, updateAllPrices } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
 import type { WishlistItem } from "@shared/schema";
-// Ensure correct import path and CategoryCounts is exported from app-sidebar
 import { AppSidebar, CategoryCounts } from "@/components/app-sidebar";
 
 // --- Helper functions ---
@@ -300,10 +301,15 @@ export default function Home() {
         categoryCounts={categoryCounts}
       />
       <div className="flex flex-col flex-1 overflow-y-auto relative z-10 scrollbar-refined">
-        <header className="sticky top-0 z-20 flex items-center justify-between p-4 border-b border-border/50 glass-strong backdrop-blur-xl">
-          {/* Removed SidebarTrigger */}
-          <div className="flex-1">
-            {/* Placeholder for potential breadcrumbs or search */}
+        <header className="sticky top-0 z-20 flex items-center justify-between p-4 border-b border-border/50 glass-strong backdrop-blur-xl shadow-lg">
+          <div className="flex items-center gap-3">
+            <SidebarTrigger
+              data-testid="button-sidebar-toggle"
+              className="rounded-xl glow-button hover-elevate glass-weak"
+            />
+            <div className="hidden sm:block">
+              <h2 className="text-lg font-semibold gradient-text">Wishlist Tracker</h2>
+            </div>
           </div>
           <div className="flex gap-2 md:gap-3 shrink-0">
             {/* Update All Button */}
@@ -338,6 +344,8 @@ export default function Home() {
               <Plus className="h-3 w-3 md:h-4 md:w-4 mr-1 md:mr-2" />
               Add Item
             </Button>
+            {/* Theme Toggle */}
+            <ThemeToggle />
           </div>
         </header>
         {/* FIX: Content area scrolls within the main container */}
