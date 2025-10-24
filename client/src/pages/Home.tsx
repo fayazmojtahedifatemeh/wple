@@ -251,13 +251,13 @@ export default function Home() {
   }: {
     message?: string;
   }) => (
-    <div className="text-center py-12">
-      <p className="text-muted-foreground mb-4">{message}</p>
+    <div className="text-center py-16 glass-weak rounded-3xl mx-auto max-w-md shadow-2xl border border-purple-200/30 dark:border-purple-500/30">
+      <p className="text-foreground/80 mb-6 text-lg font-medium">{message}</p>
       <Button
         onClick={() => setIsAddModalOpen(true)}
-        className="gradient-bg rounded-xl"
+        className="gradient-bg-animated rounded-2xl glow-interactive font-bold text-white shadow-2xl px-8 py-6 text-lg"
       >
-        <Plus className="h-4 w-4 mr-2" />
+        <Plus className="h-5 w-5 mr-2" />
         Add Your First Item
       </Button>
     </div>
@@ -289,10 +289,14 @@ export default function Home() {
   };
 
   return (
-    <div className="flex h-screen w-full bg-gradient-to-br from-background via-background to-primary/5 overflow-hidden relative">
-      {/* Animated background elements */}
-      <div className="absolute inset-0 bg-gradient-to-br from-purple-500/5 via-pink-500/5 to-blue-500/5 animate-pulse"></div>
-      <div className="absolute inset-0 bg-gradient-to-tr from-blue-500/3 via-purple-500/3 to-pink-500/3"></div>
+    <div className="flex h-screen w-full overflow-hidden relative">
+      {/* Animated pastel gradient background */}
+      <div className="absolute inset-0 bg-gradient-to-br from-purple-200/40 via-pink-200/40 to-blue-200/40 dark:from-purple-900/20 dark:via-pink-900/20 dark:to-blue-900/20"></div>
+      <div className="absolute inset-0 opacity-60">
+        <div className="absolute top-0 left-0 w-96 h-96 bg-gradient-to-br from-purple-300/50 to-transparent dark:from-purple-700/30 rounded-full blur-3xl animate-pulse"></div>
+        <div className="absolute top-20 right-20 w-80 h-80 bg-gradient-to-br from-pink-300/50 to-transparent dark:from-pink-700/30 rounded-full blur-3xl animate-pulse" style={{ animationDelay: '1s' }}></div>
+        <div className="absolute bottom-20 left-1/3 w-96 h-96 bg-gradient-to-br from-blue-300/50 to-transparent dark:from-blue-700/30 rounded-full blur-3xl animate-pulse" style={{ animationDelay: '2s' }}></div>
+      </div>
       
       <AppSidebar
         selectedCategory={selectedCategory}
@@ -301,7 +305,7 @@ export default function Home() {
         categoryCounts={categoryCounts}
       />
       <div className="flex flex-col flex-1 overflow-y-auto relative z-10 scrollbar-refined">
-        <header className="sticky top-0 z-20 flex items-center justify-between p-4 border-b border-border/50 glass-strong backdrop-blur-xl shadow-lg">
+        <header className="sticky top-0 z-20 flex items-center justify-between p-4 border-b border-border/30 glass-strong backdrop-blur-xl shadow-2xl">
           <div className="flex items-center gap-3">
             <SidebarTrigger
               data-testid="button-sidebar-toggle"
@@ -317,7 +321,7 @@ export default function Home() {
               variant="outline"
               onClick={handleUpdateAll}
               disabled={updatePricesMutation.isPending}
-              className="rounded-xl hover-elevate glow-button text-xs md:text-sm glass-weak"
+              className="rounded-2xl hover-elevate glow-button text-xs md:text-sm glass-strong border-purple-300/30 dark:border-purple-500/30 bg-gradient-to-r from-purple-100/80 to-pink-100/80 dark:from-purple-900/40 dark:to-pink-900/40 hover:from-purple-200/90 hover:to-pink-200/90 dark:hover:from-purple-800/50 dark:hover:to-pink-800/50 text-purple-900 dark:text-purple-100 font-semibold shadow-lg hover:shadow-xl transition-all duration-300"
               data-testid="button-update-all"
             >
               <RefreshCw
@@ -329,7 +333,7 @@ export default function Home() {
             <Button
               variant="outline"
               onClick={() => setIsCSVImportOpen(true)}
-              className="rounded-xl hover-elevate glow-button text-xs md:text-sm glass-weak"
+              className="rounded-2xl hover-elevate glow-button text-xs md:text-sm glass-strong border-blue-300/30 dark:border-blue-500/30 bg-gradient-to-r from-blue-100/80 to-cyan-100/80 dark:from-blue-900/40 dark:to-cyan-900/40 hover:from-blue-200/90 hover:to-cyan-200/90 dark:hover:from-blue-800/50 dark:hover:to-cyan-800/50 text-blue-900 dark:text-blue-100 font-semibold shadow-lg hover:shadow-xl transition-all duration-300"
               data-testid="button-csv-import"
             >
               <Upload className="h-3 w-3 md:h-4 md:w-4 mr-1 md:mr-2" />
@@ -338,7 +342,7 @@ export default function Home() {
             {/* Add Item Button */}
             <Button
               onClick={() => setIsAddModalOpen(true)}
-              className="rounded-xl gradient-bg-animated glow-interactive text-xs md:text-sm hover-elevate"
+              className="rounded-2xl gradient-bg-animated glow-interactive text-xs md:text-sm font-bold text-white shadow-2xl"
               data-testid="button-add-item"
             >
               <Plus className="h-3 w-3 md:h-4 md:w-4 mr-1 md:mr-2" />
@@ -370,17 +374,17 @@ export default function Home() {
               onValueChange={setActiveTab}
               className="w-full"
             >
-              <TabsList className="rounded-xl glass-strong max-w-sm animate-fade-in">
+              <TabsList className="rounded-2xl glass-strong max-w-sm animate-fade-in shadow-lg border border-purple-200/30 dark:border-purple-500/30 bg-gradient-to-r from-purple-50/90 to-pink-50/90 dark:from-purple-900/30 dark:to-pink-900/30 p-1.5">
                 <TabsTrigger
                   value="grid"
-                  className="rounded-lg gap-1.5 hover-elevate"
+                  className="rounded-xl gap-1.5 hover-elevate data-[state=active]:bg-gradient-to-r data-[state=active]:from-purple-200/80 data-[state=active]:to-pink-200/80 dark:data-[state=active]:from-purple-700/60 dark:data-[state=active]:to-pink-700/60 data-[state=active]:text-purple-900 dark:data-[state=active]:text-white data-[state=active]:shadow-lg transition-all duration-300 font-semibold"
                   data-testid="tab-grid"
                 >
                   Grid View
                 </TabsTrigger>
                 <TabsTrigger
                   value="activity"
-                  className="rounded-lg gap-1.5 hover-elevate"
+                  className="rounded-xl gap-1.5 hover-elevate data-[state=active]:bg-gradient-to-r data-[state=active]:from-purple-200/80 data-[state=active]:to-pink-200/80 dark:data-[state=active]:from-purple-700/60 dark:data-[state=active]:to-pink-700/60 data-[state=active]:text-purple-900 dark:data-[state=active]:text-white data-[state=active]:shadow-lg transition-all duration-300 font-semibold"
                   data-testid="tab-activity"
                 >
                   <Activity className="h-4 w-4" />
