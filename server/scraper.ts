@@ -1,5 +1,4 @@
-import * as cheerio from "cheerio"; // From your 3:56 PM messag
-// Remove any problematic imports and use these instead:
+import * as cheerio from "cheerio";
 import { ProductVariant, ScrapedProduct } from "../shared/schema";
 import axios from "axios";
 import vm from "vm";
@@ -13,9 +12,7 @@ interface SiteExtractor {
   ): { price: number; currency: string } | null;
   extractImages($: cheerio.CheerioAPI, baseUrl: string): string[];
   extractBrand?($: cheerio.CheerioAPI): string | undefined;
-  // URL is required for extractColors because it's used to make swatch URLs absolute
   extractColors?($: cheerio.CheerioAPI, url: string): ProductVariant[];
-  // URL is passed but unused in this implementation (hence _url)
   extractSizes?($: cheerio.CheerioAPI, url: string): ProductVariant[];
   needsPuppeteer?: boolean;
 }
@@ -275,19 +272,109 @@ function parseSrcset(srcset: string): string {
     return lastPart?.split(" ")[0] || ""; // Get URL part of the last segment
   }
 }
-// --- End Helper Functions ---
 
-interface SiteExtractor {
-  extractTitle($: cheerio.CheerioAPI): string | null;
-  extractPrice(
-    $: cheerio.CheerioAPI,
-    url: string,
-  ): { price: number; currency: string } | null;
-  extractImages($: cheerio.CheerioAPI, baseUrl: string): string[];
-  extractBrand?($: cheerio.CheerioAPI): string | undefined;
-  extractColors?($: cheerio.CheerioAPI, url: string): ProductVariant[];
-  extractSizes?($: cheerio.CheerioAPI, url: string): ProductVariant[];
-  needsPuppeteer?: boolean;
+// --- Enhanced Browser Headers ---
+const getBrowserHeaders = () => ({
+  "User-Agent":
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+  Accept:
+    "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+  "Accept-Language": "en-US,en;q=0.9",
+  "Accept-Encoding": "gzip, deflate, br",
+  "Cache-Control": "no-cache",
+  Connection: "keep-alive",
+  "Upgrade-Insecure-Requests": "1",
+  "Sec-Fetch-Dest": "document",
+  "Sec-Fetch-Mode": "navigate",
+  "Sec-Fetch-Site": "none",
+  "Sec-Fetch-User": "?1",
+  "sec-ch-ua":
+    '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+  "sec-ch-ua-mobile": "?0",
+  "sec-ch-ua-platform": '"macOS"',
+});
+
+// --- Cloud Scraping Fallback ---
+const scrapeWithCloudFallback = async (
+  url: string,
+): Promise<ScrapedProduct | null> => {
+  try {
+    console.log(`[Cloud Fallback] Trying cloud scraper for: ${url}`);
+
+    // Use CORS proxy as fallback
+    const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(url)}`;
+
+    const response = await axios.get(proxyUrl, {
+      timeout: 15000,
+      headers: getBrowserHeaders(),
+    });
+
+    const $ = cheerio.load(response.data);
+    return extractProductData($, url);
+  } catch (error) {
+    console.log("[Cloud Fallback] Failed:", error);
+    return null;
+  }
+};
+
+// --- Alternative Scraping Methods ---
+const tryAlternativeScraping = async (
+  url: string,
+): Promise<ScrapedProduct | null> => {
+  try {
+    // Method 1: Try with mobile user agent
+    const mobileHeaders = {
+      ...getBrowserHeaders(),
+      "User-Agent":
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1",
+    };
+
+    const response = await axios.get(url, {
+      timeout: 15000,
+      headers: mobileHeaders,
+    });
+
+    const $ = cheerio.load(response.data);
+    return extractProductData($, url);
+  } catch (error) {
+    console.log(`[Alternative Scraper] Mobile method failed: ${error}`);
+    return null;
+  }
+};
+
+// --- Product Data Extraction ---
+function extractProductData(
+  $: cheerio.CheerioAPI,
+  url: string,
+): ScrapedProduct {
+  const title = fallbackExtractTitle($);
+  const priceData = fallbackExtractPrice($, url);
+  const images = fallbackExtractImages($, url);
+  const brand = fallbackExtractBrand($);
+  const colors = generalExtractor.extractColors?.($, url) || [];
+  const sizes = generalExtractor.extractSizes?.($, url) || [];
+
+  const inStock =
+    sizes.length > 0
+      ? sizes.some((size) => size.available)
+      : colors.length > 0
+        ? colors.some((color) => color.available)
+        : true;
+
+  return {
+    title: title || "Untitled Product",
+    price: priceData.price,
+    currency: priceData.currency,
+    images:
+      images.length > 0
+        ? images
+        : ["https://via.placeholder.com/400?text=No+Image+Found"],
+    brand,
+    inStock,
+    colors: colors.length > 0 ? colors : undefined,
+    sizes: sizes.length > 0 ? sizes : undefined,
+    url,
+  };
 }
 
 // ==========================================================
@@ -482,6 +569,406 @@ const aymStudioExtractor: SiteExtractor = {
       console.log("[AYM Extractor] Sizes found (all selectable):", sizes);
     } catch (error) {
       console.error("[AYM Extractor] Error extracting sizes:", error);
+    }
+
+    return sizes;
+  },
+};
+// ==========================================================
+// Smart General Scraper - Multi-Method Fallback System
+// ==========================================================
+const generalExtractor: SiteExtractor = {
+  needsPuppeteer: false,
+
+  extractTitle($) {
+    // Method 1: Open Graph meta tags (most reliable)
+    const ogTitle = $('meta[property="og:title"]').attr("content");
+    if (ogTitle) return cleanText(ogTitle);
+
+    // Method 2: Schema.org JSON-LD
+    const jsonLd = $('script[type="application/ld+json"]').html();
+    if (jsonLd) {
+      try {
+        const schema = JSON.parse(jsonLd);
+        if (schema.name) return cleanText(schema.name);
+        if (schema.title) return cleanText(schema.title);
+      } catch (e) {}
+    }
+
+    // Method 3: Twitter Card
+    const twitterTitle = $('meta[name="twitter:title"]').attr("content");
+    if (twitterTitle) return cleanText(twitterTitle);
+
+    // Method 4: Standard H1
+    const h1 = $("h1").first().text();
+    if (h1) return cleanText(h1);
+
+    // Method 5: Document title
+    const docTitle = $("title").text();
+    if (docTitle && !docTitle.toLowerCase().includes("home")) {
+      return cleanText(docTitle);
+    }
+
+    return null;
+  },
+
+  extractBrand($) {
+    // Method 1: Schema.org brand
+    const jsonLd = $('script[type="application/ld+json"]').html();
+    if (jsonLd) {
+      try {
+        const schema = JSON.parse(jsonLd);
+        if (schema.brand?.name) return cleanText(schema.brand.name);
+        if (schema.brand) return cleanText(schema.brand);
+      } catch (e) {}
+    }
+
+    // Method 2: Open Graph site name
+    const ogSite = $('meta[property="og:site_name"]').attr("content");
+    if (ogSite) return cleanText(ogSite);
+
+    // Method 3: Common brand selectors
+    const brandSelectors = [
+      ".product-brand",
+      '[data-testid="brand"]',
+      ".brand",
+      '[itemprop="brand"]',
+      ".vendor",
+      ".product__vendor",
+      ".product-vendor",
+    ];
+
+    for (const selector of brandSelectors) {
+      const brand = $(selector).first().text();
+      if (brand) {
+        const cleanBrand = cleanText(brand);
+        if (cleanBrand && cleanBrand.toLowerCase() !== "shopify") {
+          return cleanBrand;
+        }
+      }
+    }
+
+    return null;
+  },
+
+  extractPrice($, url) {
+    try {
+      // Method 1: Schema.org offers (most structured)
+      const jsonLd = $('script[type="application/ld+json"]').html();
+      if (jsonLd) {
+        try {
+          const schema = JSON.parse(jsonLd);
+          const offers = schema.offers || schema;
+          if (offers.price) {
+            return {
+              price: parseFloat(offers.price),
+              currency: getCurrencySymbol(
+                offers.priceCurrency || detectCurrency("", url),
+              ),
+            };
+          }
+          // Handle ProductGroup with variants
+          if (schema.hasVariant && Array.isArray(schema.hasVariant)) {
+            const availableVariant = schema.hasVariant.find(
+              (v: any) =>
+                v.offers?.availability !== "http://schema.org/OutOfStock",
+            );
+            if (availableVariant?.offers?.price) {
+              return {
+                price: parseFloat(availableVariant.offers.price),
+                currency: getCurrencySymbol(
+                  availableVariant.offers.priceCurrency ||
+                    detectCurrency("", url),
+                ),
+              };
+            }
+          }
+        } catch (e) {}
+      }
+
+      // Method 2: Open Graph price meta tags
+      const ogPrice = $('meta[property="product:price:amount"]').attr(
+        "content",
+      );
+      const ogCurrency = $('meta[property="product:price:currency"]').attr(
+        "content",
+      );
+      if (ogPrice && ogCurrency) {
+        return {
+          price: parseFloat(ogPrice.replace(",", ".")),
+          currency: getCurrencySymbol(ogCurrency),
+        };
+      }
+
+      // Method 3: Common price selectors (ordered by reliability)
+      const priceSelectors = [
+        "[data-product-price]",
+        ".price__current",
+        ".product-price",
+        ".price-item--regular",
+        ".money",
+        ".current-price",
+        '[itemprop="price"]',
+        ".price",
+        ".product__price",
+      ];
+
+      for (const selector of priceSelectors) {
+        const priceText = cleanText($(selector).first().text());
+        if (priceText) {
+          const price = parsePrice(priceText);
+          if (price > 0) {
+            return {
+              price,
+              currency: detectCurrency(priceText, url),
+            };
+          }
+        }
+      }
+
+      // Method 4: Meta tags as last resort
+      const metaPrice = $('meta[property="og:price:amount"]').attr("content");
+      const metaCurrency = $('meta[property="og:price:currency"]').attr(
+        "content",
+      );
+      if (metaPrice && metaCurrency) {
+        return {
+          price: parseFloat(metaPrice),
+          currency: getCurrencySymbol(metaCurrency),
+        };
+      }
+    } catch (error) {
+      console.error("[General Extractor] Error extracting price:", error);
+    }
+
+    return null;
+  },
+
+  extractImages($, baseUrl) {
+    const images: string[] = [];
+    const seenUrls = new Set<string>();
+
+    // Method 1: Open Graph image
+    const ogImage = $('meta[property="og:image"]').attr("content");
+    if (ogImage) {
+      const absoluteSrc = makeAbsoluteUrl(ogImage, baseUrl);
+      if (absoluteSrc && !seenUrls.has(absoluteSrc)) {
+        images.push(absoluteSrc);
+        seenUrls.add(absoluteSrc);
+      }
+    }
+
+    // Method 2: Schema.org images
+    const jsonLd = $('script[type="application/ld+json"]').html();
+    if (jsonLd) {
+      try {
+        const schema = JSON.parse(jsonLd);
+        const imageSources =
+          schema.image || (schema.media || []).map((m: any) => m.url || m.src);
+
+        if (Array.isArray(imageSources)) {
+          imageSources.forEach((imgSrc: string) => {
+            if (imgSrc) {
+              const absoluteSrc = makeAbsoluteUrl(imgSrc, baseUrl);
+              if (absoluteSrc && !seenUrls.has(absoluteSrc)) {
+                images.push(absoluteSrc);
+                seenUrls.add(absoluteSrc);
+              }
+            }
+          });
+        } else if (typeof imageSources === "string") {
+          const absoluteSrc = makeAbsoluteUrl(imageSources, baseUrl);
+          if (absoluteSrc && !seenUrls.has(absoluteSrc)) {
+            images.push(absoluteSrc);
+            seenUrls.add(absoluteSrc);
+          }
+        }
+      } catch (e) {}
+    }
+
+    // Method 3: Common gallery selectors
+    const gallerySelectors = [
+      "[data-product-gallery] img",
+      ".product-gallery img",
+      ".product-images img",
+      ".gallery img",
+      "[data-slides] img",
+      ".swiper-wrapper img",
+      ".product__media img",
+      ".product-image img",
+    ];
+
+    for (const selector of gallerySelectors) {
+      $(selector).each((_, el) => {
+        let src = $(el).attr("src") || $(el).attr("data-src");
+        const srcset = $(el).attr("srcset");
+        if (srcset) src = parseSrcset(srcset);
+
+        if (src) {
+          if (src.startsWith("//")) src = "https:" + src;
+          const absoluteSrc = makeAbsoluteUrl(src, baseUrl);
+          if (absoluteSrc && !seenUrls.has(absoluteSrc)) {
+            images.push(absoluteSrc);
+            seenUrls.add(absoluteSrc);
+          }
+        }
+      });
+      if (images.length > 0) break; // Stop at first successful selector
+    }
+
+    return images.slice(0, 5);
+  },
+
+  extractColors($, url) {
+    const colors: ProductVariant[] = [];
+    const foundNames = new Set<string>();
+
+    try {
+      // Method 1: Schema.org variants
+      const jsonLd = $('script[type="application/ld+json"]').html();
+      if (jsonLd) {
+        try {
+          const schema = JSON.parse(jsonLd);
+          if (schema.hasVariant && Array.isArray(schema.hasVariant)) {
+            const colorMap = new Map();
+
+            schema.hasVariant.forEach((variant: any) => {
+              const variantName = variant.name || "";
+              // Try to extract color from variant name
+              const colorCandidates = [
+                variantName.split("/").pop()?.trim(),
+                variantName.split("-").pop()?.trim(),
+                variant.color,
+                variant["color-family"],
+              ];
+
+              for (const colorCandidate of colorCandidates) {
+                if (colorCandidate && typeof colorCandidate === "string") {
+                  const cleanColor = cleanText(colorCandidate);
+                  if (cleanColor && !foundNames.has(cleanColor)) {
+                    const isAvailable =
+                      variant.offers?.availability !==
+                      "http://schema.org/OutOfStock";
+                    colors.push({
+                      name: cleanColor,
+                      available: isAvailable,
+                    });
+                    foundNames.add(cleanColor);
+                    break;
+                  }
+                }
+              }
+            });
+          }
+        } catch (e) {}
+      }
+
+      // Method 2: Common color swatch selectors
+      if (colors.length === 0) {
+        const colorSelectors = [
+          '[data-option="color"]',
+          ".color-swatch",
+          ".swatch-color",
+          '[data-value*="color"]',
+          ".product-form__option--color",
+          ".product-options__color",
+        ];
+
+        for (const selector of colorSelectors) {
+          $(selector).each((_, el) => {
+            const colorName = cleanText(
+              $(el).attr("data-value") || $(el).attr("title") || $(el).text(),
+            );
+            if (colorName && !foundNames.has(colorName)) {
+              colors.push({
+                name: colorName,
+                available: true,
+              });
+              foundNames.add(colorName);
+            }
+          });
+          if (colors.length > 0) break;
+        }
+      }
+    } catch (error) {
+      console.error("[General Extractor] Error extracting colors:", error);
+    }
+
+    return colors;
+  },
+
+  extractSizes($, url) {
+    const sizes: ProductVariant[] = [];
+    const foundNames = new Set<string>();
+
+    try {
+      // Method 1: Schema.org variants
+      const jsonLd = $('script[type="application/ld+json"]').html();
+      if (jsonLd) {
+        try {
+          const schema = JSON.parse(jsonLd);
+          if (schema.hasVariant && Array.isArray(schema.hasVariant)) {
+            const sizeMap = new Map();
+
+            schema.hasVariant.forEach((variant: any) => {
+              const variantName = variant.name || "";
+              // Try to extract size from variant name
+              const sizeCandidates = [
+                variantName.split("-").pop()?.split("/")[0]?.trim(),
+                variant.size,
+                variant["size-type"],
+              ];
+
+              for (const sizeCandidate of sizeCandidates) {
+                if (sizeCandidate && typeof sizeCandidate === "string") {
+                  const cleanSize = cleanText(sizeCandidate);
+                  if (cleanSize && !foundNames.has(cleanSize)) {
+                    const isAvailable =
+                      variant.offers?.availability !==
+                      "http://schema.org/OutOfStock";
+                    sizes.push({
+                      name: cleanSize,
+                      available: isAvailable,
+                    });
+                    foundNames.add(cleanSize);
+                    break;
+                  }
+                }
+              }
+            });
+          }
+        } catch (e) {}
+      }
+
+      // Method 2: Common size selectors
+      if (sizes.length === 0) {
+        const sizeSelectors = [
+          '[data-option="size"]',
+          ".size-swatch",
+          ".swatch-size",
+          '[data-value*="size"]',
+          ".product-form__option--size",
+          ".product-options__size",
+        ];
+
+        for (const selector of sizeSelectors) {
+          $(selector).each((_, el) => {
+            const sizeName = cleanText(
+              $(el).attr("data-value") || $(el).attr("title") || $(el).text(),
+            );
+            if (sizeName && !foundNames.has(sizeName)) {
+              sizes.push({
+                name: sizeName,
+                available: true,
+              });
+              foundNames.add(sizeName);
+            }
+          });
+          if (sizes.length > 0) break;
+        }
+      }
+    } catch (error) {
+      console.error("[General Extractor] Error extracting sizes:", error);
     }
 
     return sizes;
@@ -809,8 +1296,6 @@ const gianaWorldExtractor: SiteExtractor = {
       "[Giana Extractor] Window JSON image extraction failed, falling back...",
     );
 
-    // ... rest of the extractImages method remains the same ...
-    // (The HTML fallback code doesn't need type changes)
     $(
       'script[type="application/json"][data-product-json], script#ProductJson-product-template',
     ).each((_, el) => {
@@ -1234,13 +1719,14 @@ const gianaWorldExtractor: SiteExtractor = {
     return sizes;
   },
 };
+
 // ==========================================================
 // End GianaWorld Fix
 // ==========================================================
 
 // --- Other Extractors (Keep full code) ---
 const zaraExtractor: SiteExtractor = {
-  /* Full code */ needsPuppeteer: true,
+  needsPuppeteer: false, // Changed from true to false since we're bypassing Puppeteer
   extractTitle($) {
     let title = cleanText(
       $(
@@ -1291,8 +1777,9 @@ const zaraExtractor: SiteExtractor = {
     return colors;
   },
 };
+
 const hmExtractor: SiteExtractor = {
-  /* Full code */ needsPuppeteer: true,
+  needsPuppeteer: false, // Changed from true to false
   extractTitle($) {
     const jsonSchema = $("script#product-schema").html();
     if (jsonSchema) {
@@ -1367,8 +1854,9 @@ const hmExtractor: SiteExtractor = {
     return sizes;
   },
 };
+
 const farfetchExtractor: SiteExtractor = {
-  /* Full code */ needsPuppeteer: true,
+  needsPuppeteer: false, // Changed from true to false
   extractTitle($) {
     return (
       cleanText($('p[data-testid="product-short-description"]').text()) || null
@@ -1400,8 +1888,9 @@ const farfetchExtractor: SiteExtractor = {
     return images.slice(0, 5);
   },
 };
+
 const amazonExtractor: SiteExtractor = {
-  /* Full code */ needsPuppeteer: true,
+  needsPuppeteer: false, // Changed from true to false
   extractTitle($) {
     return cleanText($("#productTitle").text()) || null;
   },
@@ -1437,8 +1926,9 @@ const amazonExtractor: SiteExtractor = {
     );
   },
 };
+
 const mytheresaExtractor: SiteExtractor = {
-  /* Full code */ needsPuppeteer: false,
+  needsPuppeteer: false,
   extractBrand($) {
     return cleanText($("div.product__area__branding__designer a").text());
   },
@@ -1479,8 +1969,9 @@ const mytheresaExtractor: SiteExtractor = {
     return sizes;
   },
 };
+
 const yooxExtractor: SiteExtractor = {
-  /* Full code */ needsPuppeteer: false,
+  needsPuppeteer: false,
   extractBrand($) {
     return cleanText($("h1.ItemInfo_designer__XsNGI a").text());
   },
@@ -1538,8 +2029,10 @@ const yooxExtractor: SiteExtractor = {
 };
 // --- End Other Extractors ---
 
-function getExtractorForSite(url: string): SiteExtractor | null {
+function getExtractorForSite(url: string): SiteExtractor {
   const hostname = new URL(url).hostname.toLowerCase();
+
+  // Specific site extractors (most reliable)
   if (hostname.includes("aym-studio.com")) return aymStudioExtractor;
   if (hostname.includes("gianaworld.com")) return gianaWorldExtractor;
   if (hostname.includes("zara.com")) return zaraExtractor;
@@ -1549,200 +2042,76 @@ function getExtractorForSite(url: string): SiteExtractor | null {
   if (hostname.includes("amazon.")) return amazonExtractor;
   if (hostname.includes("mytheresa.com")) return mytheresaExtractor;
   if (hostname.includes("yoox.com")) return yooxExtractor;
-  if (url.includes("aym-studio.com")) {
-    return aymStudioExtractor;
-  }
-  return null;
+
+  // ⚠️ IMPORTANT: Remove Puppeteer delegation - use enhanced axios for all sites
+  // Default to smart general scraper for everything else
+  return generalExtractor;
 }
 
+// --- Enhanced Scraping Function ---
 export async function scrapeProductFromUrl(
   url: string,
+  retries = 2,
 ): Promise<ScrapedProduct> {
-  let siteExtractor: SiteExtractor | null = null;
-  try {
-    siteExtractor = getExtractorForSite(url);
-    console.log(`[Scraper] Starting scrape for: ${url}`);
+  console.log(`[Scraper] Starting scrape for: ${url}`);
 
-    if (siteExtractor?.needsPuppeteer) {
-      console.log(
-        `[Scraper] Site ${new URL(url).hostname} requires Puppeteer, delegating...`,
-      );
-      const { scrapeWithPuppeteer } = await import("./puppeteer-scraper");
-      return await scrapeWithPuppeteer(url);
-    }
+  let lastError: Error;
 
-    // --- Axios Request ---
-    console.log(`[Scraper] Scraping ${new URL(url).hostname} with Axios...`);
-
-    let response;
+  for (let attempt = 0; attempt <= retries; attempt++) {
     try {
-      response = await axios.get(url, {
-        headers: {
-          "User-Agent":
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-          Accept:
-            "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-          "Accept-Language": "en-US,en;q=0.9",
-          "Accept-Encoding": "gzip, deflate, br",
-          "Sec-Ch-Ua":
-            '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
-          "Sec-Ch-Ua-Mobile": "?0",
-          "Sec-Ch-Ua-Platform": '"Windows"',
-          "Sec-Fetch-Dest": "document",
-          "Sec-Fetch-Mode": "navigate",
-          "Sec-Fetch-Site": "none",
-          "Sec-Fetch-User": "?1",
-          "Upgrade-Insecure-Requests": "1",
-          Dnt: "1",
-        },
-        timeout: 20000,
-        maxRedirects: 5,
-      });
-    } catch (axiosError: unknown) {
-      console.error("[Scraper] Axios request failed:", axiosError);
-      throw new Error(
-        `Network request failed: ${axiosError instanceof Error ? axiosError.message : "Unknown error"}`,
-      );
-    }
+      if (attempt > 0) {
+        console.log(`[Scraper] Retry attempt ${attempt} for ${url}`);
+        await new Promise((resolve) => setTimeout(resolve, 1000 * attempt));
+      }
 
-    if (response.status < 200 || response.status >= 300) {
-      throw new Error(`Request failed with status code ${response.status}`);
-    }
+      const domain = new URL(url).hostname;
+      let result: ScrapedProduct | null = null;
 
-    const html = response.data;
-    const $ = cheerio.load(html);
-    // --- End Axios Request ---
+      // Skip Puppeteer for now since it's not working in Replit
+      console.log(`[Scraper] Using enhanced axios for: ${domain}`);
 
-    // ... rest of your scraping logic
+      try {
+        // First try: Direct request with enhanced headers
+        const response = await axios.get(url, {
+          timeout: 15000,
+          headers: getBrowserHeaders(),
+          validateStatus: (status) => status < 500, // Accept 403, 404 but not server errors
+        });
 
-    let title: string | null = null;
-    let priceData: { price: number; currency: string } | null = null;
-    let images: string[] = [];
-    let brand: string | undefined;
-    let colors: ProductVariant[] | undefined;
-    let sizes: ProductVariant[] | undefined;
+        if (response.status === 403) {
+          console.log(
+            `[Scraper] Got 403 for ${url}, trying alternative approach...`,
+          );
+          result = await tryAlternativeScraping(url);
+        } else {
+          const $ = cheerio.load(response.data);
+          result = extractProductData($, url);
+        }
+      } catch (axiosError) {
+        console.log(`[Scraper] Direct request failed: ${axiosError}`);
+      }
 
-    if (siteExtractor) {
-      console.log(`[Scraper] Using extractor for: ${new URL(url).hostname}`);
-      title = siteExtractor.extractTitle($);
-      priceData = siteExtractor.extractPrice($, url);
-      images = siteExtractor.extractImages($, url);
-      brand = siteExtractor.extractBrand?.($);
-      colors = siteExtractor.extractColors?.($, url);
-      sizes = siteExtractor.extractSizes?.($, url);
-      console.log(
-        `[Extractor Results] Title: ${title}, Price: ${priceData?.price}, Brand: ${brand}, Colors: ${colors?.length}, Sizes: ${sizes?.length}`,
-      );
-    } else {
-      console.log(
-        `[Scraper] No specific extractor found for ${new URL(url).hostname}. Using fallbacks.`,
-      );
-    }
+      // Second try: Cloud fallback (except for Etsy which blocks aggressively)
+      if (!result && !domain.includes("etsy.com")) {
+        console.log(`[Scraper] Trying cloud fallback for ${url}`);
+        result = await scrapeWithCloudFallback(url);
+      }
 
-    // --- Fallback Logic ---
-    if (!title) {
-      title = fallbackExtractTitle($);
-      console.log("[Fallback] Used Title Fallback");
+      if (result) {
+        console.log(`[Scraper] Successfully scraped ${url}`);
+        return result;
+      }
+    } catch (error) {
+      lastError = error as Error;
+      console.log(`[Scraper] Attempt ${attempt} failed:`, error);
     }
-    if (!priceData) {
-      priceData = fallbackExtractPrice($, url);
-      console.log("[Fallback] Used Price Fallback");
-    }
-    if (!images || images.length === 0) {
-      images = fallbackExtractImages($, url);
-      console.log("[Fallback] Used Images Fallback");
-    }
-    if (!brand) {
-      brand = fallbackExtractBrand($);
-      console.log("[Fallback] Used Brand Fallback");
-    }
-    // --- End Fallback Logic ---
-
-    if (!title || title === "Untitled Product")
-      throw new Error(
-        "Failed to extract product title - page may not be accessible or scraping blocked.",
-      );
-    if (!priceData || isNaN(priceData.price) || priceData.price < 0) {
-      console.warn("[Scraper] Warning: Could not extract valid price for", url);
-      priceData = { price: 0, currency: detectCurrency("", url) || "$" };
-    }
-
-    let inStock = true;
-    if (sizes && sizes.length > 0) {
-      inStock = sizes.some((size) => size.available !== false);
-    } else if (colors && colors.length > 0) {
-      inStock = colors.some((color) => color.available !== false);
-    }
-
-    console.log(
-      `[Scraper Final Data] Title: ${title}, Price: ${priceData.price}, Brand: ${brand}, Colors: ${colors?.length || 0}, Sizes: ${sizes?.length || 0}, InStock: ${inStock}`,
-    );
-
-    return {
-      title,
-      price: priceData.price,
-      currency: priceData.currency,
-      images:
-        images && images.length > 0
-          ? images
-          : ["https://via.placeholder.com/400?text=No+Image+Found"],
-      brand,
-      inStock: inStock,
-      colors: colors && colors.length > 0 ? colors : undefined,
-      sizes: sizes && sizes.length > 0 ? sizes : undefined,
-      url,
-    };
-  } catch (error) {
-    // --- Error Handling ---
-    console.error(`[Scraper] FULL ERROR for ${url}:`, error); // Log the full error object
-    if (axios.isAxiosError(error)) {
-      const status = error.response?.status;
-      if (error.code === "ECONNABORTED" || error.code === "ETIMEDOUT")
-        return Promise.reject(
-          new Error("Request timeout - the website took too long to respond."),
-        );
-      if (status === 403)
-        return Promise.reject(
-          new Error(
-            "Access denied (403) - website is blocking automated requests.",
-          ),
-        );
-      if (status === 404)
-        return Promise.reject(
-          new Error(
-            "Product not found (404) - URL invalid or product removed.",
-          ),
-        );
-      if (status && status >= 500)
-        return Promise.reject(
-          new Error(
-            `Website server error (${status}) - please try again later.`,
-          ),
-        );
-      console.error(
-        `[Scraper] Axios Error Status: ${status}, Code: ${error.code}, Message: ${error.message}`,
-      );
-      return Promise.reject(
-        new Error(
-          `Network error scraping product (Status: ${status || "N/A"}). Check server logs.`,
-        ),
-      );
-    } else if (error instanceof Error) {
-      console.error("[Scraper] Internal Scraping Error:", error.message);
-      return Promise.reject(error); // Re-throw the specific error
-    } else {
-      console.error("[Scraper] Unexpected Non-Error Thrown:", error);
-      return Promise.reject(
-        new Error(
-          "An unexpected error occurred during scraping. Check server logs.",
-        ),
-      );
-    }
-    // --- End Error Handling ---
   }
+
+  console.log(`[Scraper] All methods failed for ${url}:`, lastError!);
+  throw new Error(`Failed to scrape product: ${lastError!.message}`);
 }
 
-// --- Fallback Functions (Full Implementations) ---
+// --- Fallback Functions ---
 function fallbackExtractTitle($: cheerio.CheerioAPI): string {
   const selectors = [
     'meta[property="og:title"]',

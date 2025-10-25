@@ -1,526 +1,362 @@
-import puppeteer from "puppeteer";
-// FIX: Import the new types from the shared schema
-import type { ScrapedProduct, ProductVariant } from "@shared/schema";
+import axios from "axios";
+import * as cheerio from "cheerio";
+import { ScrapedProduct } from "../shared/schema";
 
-interface PuppeteerConfig {
-  waitForSelector?: string;
-  timeout?: number;
-  additionalWaitTime?: number;
-}
+// Enhanced browser headers for better anti-bot protection
+const getBrowserHeaders = () => ({
+  "User-Agent":
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+  Accept:
+    "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+  "Accept-Language": "en-US,en;q=0.9",
+  "Accept-Encoding": "gzip, deflate, br",
+  "Cache-Control": "no-cache",
+  Connection: "keep-alive",
+  "Upgrade-Insecure-Requests": "1",
+  "Sec-Fetch-Dest": "document",
+  "Sec-Fetch-Mode": "navigate",
+  "Sec-Fetch-Site": "none",
+  "Sec-Fetch-User": "?1",
+  "sec-ch-ua":
+    '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+  "sec-ch-ua-mobile": "?0",
+  "sec-ch-ua-platform": '"macOS"',
+});
 
-const siteConfigs: Record<string, PuppeteerConfig> = {
-  "zara.com": {
-    waitForSelector: 'span[data-qa-qualifier="price-amount-current"]',
-    timeout: 10000,
-    additionalWaitTime: 2000,
-  },
-  "hm.com": {
-    waitForSelector: "#product-schema",
-    timeout: 10000,
-    additionalWaitTime: 1000,
-  },
-  "farfetch.com": {
-    waitForSelector: 'p[data-component="PriceLarge"]',
-    timeout: 10000,
-    additionalWaitTime: 2000,
-  },
+// Free CORS proxy options
+const FREE_PROXIES = [
+  (url: string) => `https://corsproxy.io/?${encodeURIComponent(url)}`,
+  (url: string) =>
+    `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+  (url: string) => `https://cors-anywhere.herokuapp.com/${url}`,
+];
+
+export const scrapeWithPuppeteer = async (
+  url: string,
+): Promise<ScrapedProduct> => {
+  console.log(`[Puppeteer Fallback] Using enhanced cloud scraper for: ${url}`);
+
+  let lastError: Error;
+
+  // Try each free proxy in sequence
+  for (const proxyFn of FREE_PROXIES) {
+    try {
+      const proxyUrl = proxyFn(url);
+      console.log(
+        `[Puppeteer Fallback] Trying proxy: ${proxyUrl.substring(0, 50)}...`,
+      );
+
+      const response = await axios.get(proxyUrl, {
+        timeout: 15000,
+        headers: getBrowserHeaders(),
+      });
+
+      const $ = cheerio.load(response.data);
+
+      // Use the general extractor logic
+      const title = extractTitle($);
+      const priceData = extractPrice($, url);
+      const images = extractImages($, url);
+      const brand = extractBrand($);
+      const colors = extractColors($, url);
+      const sizes = extractSizes($, url);
+
+      const inStock =
+        sizes.length > 0
+          ? sizes.some((size) => size.available)
+          : colors.length > 0
+            ? colors.some((color) => color.available)
+            : true;
+
+      if (!title) {
+        throw new Error("Could not extract product title");
+      }
+
+      console.log(
+        `[Puppeteer Fallback] Successfully scraped ${url} with proxy`,
+      );
+
+      return {
+        title,
+        price: priceData.price,
+        currency: priceData.currency,
+        images:
+          images.length > 0
+            ? images
+            : ["https://via.placeholder.com/400?text=No+Image+Found"],
+        brand,
+        inStock,
+        colors: colors.length > 0 ? colors : undefined,
+        sizes: sizes.length > 0 ? sizes : undefined,
+        url,
+      };
+    } catch (error) {
+      lastError = error as Error;
+      console.log(`[Puppeteer Fallback] Proxy failed: ${error}`);
+      // Continue to next proxy
+    }
+  }
+
+  // If all proxies failed, try direct request with enhanced headers
+  try {
+    console.log(
+      `[Puppeteer Fallback] All proxies failed, trying direct request for: ${url}`,
+    );
+
+    const response = await axios.get(url, {
+      timeout: 15000,
+      headers: getBrowserHeaders(),
+      validateStatus: (status) => status < 500,
+    });
+
+    const $ = cheerio.load(response.data);
+
+    const title = extractTitle($);
+    const priceData = extractPrice($, url);
+    const images = extractImages($, url);
+    const brand = extractBrand($);
+    const colors = extractColors($, url);
+    const sizes = extractSizes($, url);
+
+    const inStock =
+      sizes.length > 0
+        ? sizes.some((size) => size.available)
+        : colors.length > 0
+          ? colors.some((color) => color.available)
+          : true;
+
+    if (!title) {
+      throw new Error("Could not extract product title");
+    }
+
+    console.log(
+      `[Puppeteer Fallback] Successfully scraped ${url} with direct request`,
+    );
+
+    return {
+      title,
+      price: priceData.price,
+      currency: priceData.currency,
+      images:
+        images.length > 0
+          ? images
+          : ["https://via.placeholder.com/400?text=No+Image+Found"],
+      brand,
+      inStock,
+      colors: colors.length > 0 ? colors : undefined,
+      sizes: sizes.length > 0 ? sizes : undefined,
+      url,
+    };
+  } catch (error) {
+    console.error(
+      `[Puppeteer Fallback] All methods failed for ${url}:`,
+      lastError!,
+    );
+    throw new Error(
+      `Failed to scrape product with cloud fallback: ${lastError!.message}`,
+    );
+  }
 };
 
-function getSiteConfig(url: string): PuppeteerConfig | null {
-  const hostname = new URL(url).hostname.toLowerCase();
+// Helper functions for extraction (similar to your general extractor)
+function extractTitle($: cheerio.CheerioAPI): string | null {
+  const ogTitle = $('meta[property="og:title"]').attr("content");
+  if (ogTitle) return cleanText(ogTitle);
 
-  for (const [domain, config] of Object.entries(siteConfigs)) {
-    if (hostname.includes(domain)) {
-      return config;
-    }
+  const jsonLd = $('script[type="application/ld+json"]').html();
+  if (jsonLd) {
+    try {
+      const schema = JSON.parse(jsonLd);
+      if (schema.name) return cleanText(schema.name);
+      if (schema.title) return cleanText(schema.title);
+    } catch (e) {}
+  }
+
+  const h1 = $("h1").first().text();
+  if (h1) return cleanText(h1);
+
+  const docTitle = $("title").text();
+  if (docTitle && !docTitle.toLowerCase().includes("home")) {
+    return cleanText(docTitle);
   }
 
   return null;
 }
 
-export async function scrapeWithPuppeteer(
+function extractPrice(
+  $: cheerio.CheerioAPI,
   url: string,
-): Promise<ScrapedProduct> {
-  const config = getSiteConfig(url);
-
-  if (!config) {
-    // FIX: Check for gianaworld which we know works without puppeteer
-    if (url.includes("gianaworld")) {
-      throw new Error(
-        "This site should not be using Puppeteer. Check scraper.ts",
-      );
-    }
-    throw new Error("Site not configured for Puppeteer scraping");
-  }
-
-  let browser;
-
-  try {
-    console.log("[Puppeteer] Launching browser for:", url);
-
-    browser = await puppeteer.launch({
-      headless: true,
-      args: [
-        "--no-sandbox",
-        "--disable-setuid-sandbox",
-        "--disable-dev-shm-usage",
-        "--disable-accelerated-2d-canvas",
-        "--disable-gpu",
-        "--window-size=1920x1080",
-        "--single-process", // Add this for Replit compatibility
-      ],
-      executablePath: process.env.CHROME_PATH || "/usr/bin/chromium-browser", // Use system Chromium
-    });
-
-    const page = await browser.newPage();
-
-    await page.setUserAgent(
-      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    );
-    await page.setViewport({ width: 1920, height: 1080 });
-
-    console.log("[Puppeteer] Navigating to page...");
-    await page.goto(url, {
-      waitUntil: "networkidle2",
-      timeout: config.timeout || 10000,
-    });
-
-    if (config.waitForSelector) {
-      console.log("[Puppeteer] Waiting for selector:", config.waitForSelector);
-      await page.waitForSelector(config.waitForSelector, {
-        timeout: config.timeout || 10000,
-      });
-    }
-
-    if (config.additionalWaitTime) {
-      await new Promise((resolve) =>
-        setTimeout(resolve, config.additionalWaitTime),
-      );
-    }
-
-    console.log("[Puppeteer] Page loaded, extracting content...");
-
-    const html = await page.content();
-    const cheerio = await import("cheerio");
-    const $ = cheerio.load(html);
-
-    const hostname = new URL(url).hostname.toLowerCase();
-    let product: ScrapedProduct;
-
-    // FIX: Add aym-studio to the extractor list
-    if (hostname.includes("aym-studio")) {
-      product = await extractAymProduct($, url);
-    } else if (hostname.includes("zara")) {
-      product = await extractZaraProduct($, url);
-    } else if (hostname.includes("hm.com")) {
-      product = await extractHMProduct($, url);
-    } else if (hostname.includes("farfetch")) {
-      product = await extractFarfetchProduct($, url, page);
-    } else {
-      throw new Error("Unsupported site for Puppeteer scraping");
-    }
-
-    console.log("[Puppeteer] Successfully extracted:", product.title);
-
-    return product;
-  } catch (error) {
-    console.error("[Puppeteer] Error:", error);
-    throw new Error(
-      `Puppeteer scraping failed: ${error instanceof Error ? error.message : "Unknown error"}`,
-    );
-  } finally {
-    if (browser) {
-      await browser.close();
-    }
-  }
-}
-
-// Helper function
-const cleanText = (text: string | undefined) =>
-  text?.trim().replace(/\s+/g, " ") || "";
-
-// FIX: New extractor for aym-studio
-async function extractAymProduct($: any, url: string): Promise<ScrapedProduct> {
-  const title = cleanText($("h1.product-title").text());
-  const brand = "AYM Studio"; // Hardcode or extract if available
-
-  const currencyMeta = $('meta[property="og:price:currency"]').attr("content");
-  const priceMeta = $('meta[property="og:price:amount"]').attr("content");
-  let price = 0;
-  let currency = "$";
-
-  if (priceMeta && currencyMeta) {
-    price = parseFloat(priceMeta);
-    currency = getCurrencySymbol(currencyMeta);
-  } else {
-    const priceText = cleanText(
-      $("price-list sale-price, price-list regular-price").text(),
-    );
-    price = parseFloat(priceText.replace(/[^\d.,]/g, "").replace(/,/g, ""));
-    currency = detectCurrency(priceText, url);
-  }
-
-  const images: string[] = [];
-  $("scroll-carousel div.product-gallery__media img").each(
-    (_: any, el: any) => {
-      let src: string | undefined = $(el).attr("src");
-      const srcset = $(el).attr("srcset");
-      if (srcset) {
-        const largest = srcset
-          .split(",")
-          .map((s: string) => s.trim())
-          .pop();
-        if (largest) src = largest.split(" ")[0];
-      }
-      if (src && src.startsWith("//")) src = "https:" + src;
-      if (src && src.startsWith("http") && !images.includes(src)) {
-        images.push(src);
-      }
-    },
-  );
-
-  const colors: ProductVariant[] = [];
-  $("div.product-form__swatches--colour label.product-form__swatch").each(
-    (_: any, el: any) => {
-      const colorName = cleanText(
-        $(el).find("span.product-form__swatch-value").text(),
-      );
-      const swatchImg = $(el)
-        .find("img.product-form__swatch-image")
-        .attr("src");
-      const isSoldOut =
-        $(el).find("span.product-form__swatch-value--sold-out").length > 0;
-      if (colorName) {
-        colors.push({
-          name: colorName,
-          swatch: swatchImg ? "https:" + swatchImg : undefined,
-          available: !isSoldOut,
-        });
-      }
-    },
-  );
-
-  const sizes: ProductVariant[] = [];
-  $("div.product-form__swatches--size label.product-form__swatch").each(
-    (_: any, el: any) => {
-      const sizeName = cleanText(
-        $(el).find("span.product-form__swatch-value").text(),
-      );
-      const isSoldOut =
-        $(el).find("span.product-form__swatch-value--sold-out").length > 0;
-      if (sizeName) {
-        sizes.push({
-          name: sizeName,
-          available: !isSoldOut,
-        });
-      }
-    },
-  );
-
-  return {
-    title: title || "Unknown Product",
-    brand,
-    price,
-    currency,
-    images: images.slice(0, 5),
-    inStock: true,
-    colors: colors.length > 0 ? colors : undefined,
-    sizes: sizes.length > 0 ? sizes : undefined,
-    url,
-  };
-}
-
-async function extractZaraProduct(
-  $: any,
-  url: string,
-): Promise<ScrapedProduct> {
-  let title = cleanText(
-    $(
-      "h1.product-detail-card-info__title span.product-detail-card-info__name",
-    ).text(),
-  );
-  if (!title)
-    title = cleanText(
-      $('span[data-qa-qualifier="product-detail-info-name"]').text(),
-    );
-  const brand = "ZARA";
-  const priceText = cleanText(
-    $(
-      'span[data-qa-qualifier="price-amount-current"] span.money-amount__main',
-    ).text(),
-  );
-  const price = parseFloat(priceText.replace(/[^\d.,]/g, "").replace(/,/g, ""));
-  const currency = detectCurrency(priceText, url);
-
-  const images: string[] = [];
-  $('picture[data-qa-qualifier="media-image"]').each((_: any, el: any) => {
-    const srcset = $(el).find("source").attr("srcset");
-    if (srcset) {
-      const largest = srcset
-        .split(",")
-        .map((s: string) => s.trim())
-        .pop();
-      if (largest) images.push(largest.split(" ")[0]);
-    }
-  });
-
-  // FIX: Return ProductVariant[]
-  const colors: ProductVariant[] = [];
-  $(
-    "ul.product-detail-color-selector__colors li.product-detail-color-item",
-  ).each((_: any, el: any) => {
-    const colorName = cleanText($(el).find("span.screen-reader-text").text());
-    if (colorName) colors.push({ name: colorName, available: true });
-  });
-
-  // FIX: Return ProductVariant[]
-  const sizes: ProductVariant[] = [];
-  $(
-    'div[data-qa-qualifier="size-selector"] button[data-qa-action="size-selector-button"]',
-  ).each((_: any, el: any) => {
-    const sizeName = cleanText($(el).find("span").text());
-    const isDisabled = $(el).attr("disabled") !== undefined;
-    if (sizeName && !sizeName.toLowerCase().includes("size guide")) {
-      sizes.push({ name: sizeName, available: !isDisabled });
-    }
-  });
-
-  console.log("[Puppeteer-Zara] Extracted:", {
-    title,
-    brand,
-    colors: colors.length,
-    sizes: sizes.length,
-  });
-
-  return {
-    title: title || "Unknown Product",
-    brand,
-    price,
-    currency,
-    images: images.slice(0, 5),
-    inStock: true,
-    colors: colors.length > 0 ? colors : undefined,
-    sizes: sizes.length > 0 ? sizes : undefined,
-    url,
-  };
-}
-
-async function extractHMProduct($: any, url: string): Promise<ScrapedProduct> {
-  let title = "";
-  let brand = "H&M";
-  let price = 0;
-  let currency = "$";
-  let images: string[] = [];
-
-  const jsonSchema = $("script#product-schema").html();
-  if (jsonSchema) {
+): { price: number; currency: string } {
+  const jsonLd = $('script[type="application/ld+json"]').html();
+  if (jsonLd) {
     try {
-      const data = JSON.parse(jsonSchema);
-      title = data.name || "";
-      brand = data.brand?.name || "H&M";
-      price = parseFloat(data.offers?.price || "0");
-      currency = getCurrencySymbol(data.offers?.priceCurrency || "$");
-      if (Array.isArray(data.image)) {
-        images = data.image.slice(0, 5);
+      const schema = JSON.parse(jsonLd);
+      const offers = schema.offers || schema;
+      if (offers.price) {
+        return {
+          price: parseFloat(offers.price),
+          currency: getCurrencySymbol(
+            offers.priceCurrency || detectCurrency("", url),
+          ),
+        };
       }
-    } catch (e) {
-      console.error("[Puppeteer-HM] Failed to parse JSON schema:", e);
+    } catch (e) {}
+  }
+
+  const priceSelectors = [
+    "[data-product-price]",
+    ".price__current",
+    ".product-price",
+    ".price-item--regular",
+    ".money",
+    ".current-price",
+    '[itemprop="price"]',
+    ".price",
+    ".product__price",
+  ];
+
+  for (const selector of priceSelectors) {
+    const priceText = cleanText($(selector).first().text());
+    if (priceText) {
+      const price = parsePrice(priceText);
+      if (price > 0) {
+        return {
+          price,
+          currency: detectCurrency(priceText, url),
+        };
+      }
     }
   }
 
-  if (!title) title = cleanText($("h1").text());
-  if (price === 0) {
-    const priceText = cleanText($('span[translate="no"]').text());
-    price = parseFloat(priceText.replace(/[^\d.,]/g, "").replace(/,/g, ""));
-    currency = detectCurrency(priceText, url);
-  }
-
-  // FIX: Return ProductVariant[]
-  const colors: ProductVariant[] = [];
-  $('div[data-testid="color-selector-wrapper"] a[role="radio"]').each(
-    (_: any, el: any) => {
-      const colorName = $(el).attr("title");
-      const swatchImg = $(el).find("img").attr("src");
-      if (colorName)
-        colors.push({
-          name: cleanText(colorName),
-          swatch: swatchImg,
-          available: true,
-        });
-    },
-  );
-
-  // FIX: Return ProductVariant[]
-  const sizes: ProductVariant[] = [];
-  $(
-    'div[data-testid="size-selector"] ul[data-testid="grid"] div[role="radio"]',
-  ).each((_: any, el: any) => {
-    const sizeName = cleanText($(el).find("div").first().text());
-    const ariaLabel = $(el).attr("aria-label") || "";
-    const isAvailable = !ariaLabel.toLowerCase().includes("out of stock");
-    if (sizeName) sizes.push({ name: sizeName, available: isAvailable });
-  });
-
-  console.log("[Puppeteer-HM] Extracted:", {
-    title,
-    brand,
-    colors: colors.length,
-    sizes: sizes.length,
-  });
-
-  return {
-    title: title || "Unknown Product",
-    brand,
-    price,
-    currency,
-    images: images.length > 0 ? images : ["https://via.placeholder.com/400"],
-    inStock: true,
-    colors: colors.length > 0 ? colors : undefined,
-    sizes: sizes.length > 0 ? sizes : undefined,
-    url,
-  };
+  return { price: 0, currency: "$" };
 }
 
-async function extractFarfetchProduct(
-  $: any,
-  url: string,
-  page: any,
-): Promise<ScrapedProduct> {
-  const brand = cleanText(
-    $(
-      'h1.ltr-i980jo a.ltr-1rkeqir-Body-Heading, a[data-component="DesignerName"]',
-    ).text(),
-  );
-  const title = cleanText(
-    $('p[data-testid="product-short-description"]').text(),
-  );
-  const priceText = cleanText($('p[data-component="PriceLarge"]').text());
-  const price = parseFloat(priceText.replace(/[^\d.,]/g, "").replace(/,/g, ""));
-  const currency = detectCurrency(priceText, url);
-
+function extractImages($: cheerio.CheerioAPI, baseUrl: string): string[] {
   const images: string[] = [];
-  $(
-    'div.ltr-1kklpjs button.ltr-1c58b5g img, [data-testid="product-image"] img',
-  ).each((_: any, el: any) => {
-    const src = $(el).attr("src");
-    if (src && src.startsWith("http")) images.push(src);
+  const seenUrls = new Set<string>();
+
+  const ogImage = $('meta[property="og:image"]').attr("content");
+  if (ogImage) {
+    const absoluteSrc = makeAbsoluteUrl(ogImage, baseUrl);
+    if (absoluteSrc && !seenUrls.has(absoluteSrc)) {
+      images.push(absoluteSrc);
+      seenUrls.add(absoluteSrc);
+    }
+  }
+
+  $("img").each((_, el) => {
+    let src = $(el).attr("src") || $(el).attr("data-src");
+    const srcset = $(el).attr("srcset");
+    if (srcset) src = parseSrcset(srcset);
+
+    if (src) {
+      if (src.startsWith("//")) src = "https:" + src;
+      const absoluteSrc = makeAbsoluteUrl(src, baseUrl);
+      if (absoluteSrc && !seenUrls.has(absoluteSrc)) {
+        images.push(absoluteSrc);
+        seenUrls.add(absoluteSrc);
+      }
+    }
   });
 
-  // FIX: Return ProductVariant[]
-  const colors: ProductVariant[] = [];
-  $(
-    'div[data-testid="ColorSelector"] button, div[data-component="ColorSelector"] button',
-  ).each((_: any, el: any) => {
+  return images.slice(0, 5);
+}
+
+function extractBrand($: cheerio.CheerioAPI): string | undefined {
+  const jsonLd = $('script[type="application/ld+json"]').html();
+  if (jsonLd) {
+    try {
+      const schema = JSON.parse(jsonLd);
+      if (schema.brand?.name) return cleanText(schema.brand.name);
+      if (schema.brand) return cleanText(schema.brand);
+    } catch (e) {}
+  }
+
+  const ogSite = $('meta[property="og:site_name"]').attr("content");
+  if (ogSite) return cleanText(ogSite);
+
+  return undefined;
+}
+
+function extractColors($: cheerio.CheerioAPI, url: string): any[] {
+  // Simple color extraction for fallback
+  const colors: any[] = [];
+  $('[data-option="color"], .color-swatch, .swatch-color').each((_, el) => {
     const colorName = cleanText(
-      $(el).attr("aria-label") || $(el).attr("title") || "",
+      $(el).attr("data-value") || $(el).attr("title") || $(el).text(),
     );
-    if (colorName && !colorName.toLowerCase().includes("select")) {
+    if (colorName) {
       colors.push({ name: colorName, available: true });
     }
   });
+  return colors;
+}
 
-  // FIX: Return ProductVariant[]
-  const sizes: ProductVariant[] = [];
-  const sizeSelector = $(
-    'div[data-testid="ScaledSizeSelector"], div[data-component="SizeSelector"]',
-  );
-  if (sizeSelector.length) {
-    try {
-      console.log("[Puppeteer-Farfetch] Attempting to extract sizes...");
-      const dropdownButton = await page.$(
-        'div[data-testid="ScaledSizeSelector"] div.ltr-1aksjyr, div[data-component="SizeSelector"] button',
-      );
-      if (dropdownButton) {
-        await dropdownButton.click();
-        await page.waitForTimeout(1000);
-
-        const newHtml = await page.content();
-        const $new = (await import("cheerio")).load(newHtml);
-
-        $new('[data-testid="SizeOption"], [data-component="SizeOption"]').each(
-          (_: any, el: any) => {
-            const sizeName = cleanText($new(el).text());
-            const isAvailable = $new(el).attr("disabled") === undefined;
-            if (sizeName)
-              sizes.push({ name: sizeName, available: isAvailable });
-          },
-        );
-        console.log("[Puppeteer-Farfetch] Extracted sizes:", sizes.length);
-      } else {
-        console.log("[Puppeteer-Farfetch] Size dropdown button not found");
-      }
-    } catch (e) {
-      console.log(
-        "[Puppeteer-Farfetch] Could not extract sizes:",
-        e instanceof Error ? e.message : "Unknown error",
-      );
+function extractSizes($: cheerio.CheerioAPI, url: string): any[] {
+  // Simple size extraction for fallback
+  const sizes: any[] = [];
+  $('[data-option="size"], .size-swatch, .swatch-size').each((_, el) => {
+    const sizeName = cleanText(
+      $(el).attr("data-value") || $(el).attr("title") || $(el).text(),
+    );
+    if (sizeName) {
+      sizes.push({ name: sizeName, available: true });
     }
-  } else {
-    console.log("[Puppeteer-Farfetch] Size selector not found in page");
+  });
+  return sizes;
+}
+
+// Reuse your existing helper functions
+function cleanText(text: string | undefined): string {
+  if (!text) return "";
+  return text.trim().replace(/\s+/g, " ");
+}
+
+function parsePrice(priceText: string): number {
+  if (!priceText || typeof priceText !== "string") return 0;
+  const cleaned = priceText.replace(/[^\d.,]/g, "");
+  const lastComma = cleaned.lastIndexOf(",");
+  const lastPeriod = cleaned.lastIndexOf(".");
+
+  let decimalSeparator = ".";
+  if (lastComma > lastPeriod) {
+    decimalSeparator = ",";
   }
 
-  console.log("[Puppeteer-Farfetch] Extracted:", {
-    title,
-    brand,
-    colors: colors.length,
-    sizes: sizes.length,
-  });
+  let numberString = cleaned;
+  if (decimalSeparator === ",") {
+    numberString = cleaned.replace(/\./g, "").replace(",", ".");
+  } else {
+    numberString = cleaned.replace(/,/g, "");
+  }
 
-  return {
-    title: title || "Unknown Product",
-    brand,
-    price,
-    currency,
-    images: images.slice(0, 5),
-    inStock: true,
-    colors: colors.length > 0 ? colors : undefined,
-    sizes: sizes.length > 0 ? sizes : undefined,
-    url,
-  };
+  numberString = numberString.replace(/[^\d.]/g, "");
+  const price = parseFloat(numberString);
+  return isNaN(price) ? 0 : price;
 }
 
 function detectCurrency(text: string, url?: string): string {
+  if (!text) text = "";
   if (text.includes("£") || text.toUpperCase().includes("GBP")) return "£";
   if (text.includes("€") || text.toUpperCase().includes("EUR")) return "€";
   if (
     text.includes("¥") ||
+    text.includes("￥") ||
     text.toUpperCase().includes("JPY") ||
-    text.toUpperCase().includes("CNY")
+    text.toUpperCase().includes("CNY") ||
+    text.toUpperCase().includes("RMB")
   )
     return "¥";
   if (text.includes("₹") || text.toUpperCase().includes("INR")) return "₹";
   if (text.includes("A$") || text.toUpperCase().includes("AUD")) return "A$";
   if (text.includes("C$") || text.toUpperCase().includes("CAD")) return "C$";
-
-  if (url) {
-    const hostname = url.toLowerCase();
-    if (
-      hostname.includes(".uk") ||
-      hostname.includes("/uk/") ||
-      hostname.includes("/gb/")
-    )
-      return "£";
-    if (
-      hostname.includes(".eu") ||
-      hostname.includes("/eu/") ||
-      hostname.includes("/de/") ||
-      hostname.includes("/fr/") ||
-      hostname.includes("/es/") ||
-      hostname.includes("/it/")
-    )
-      return "€";
-    if (hostname.includes(".jp") || hostname.includes("/jp/")) return "¥";
-    if (hostname.includes(".in") || hostname.includes("/in/")) return "₹";
-    if (hostname.includes(".au") || hostname.includes("/au/")) return "A$";
-    if (hostname.includes(".ca") || hostname.includes("/ca/")) return "C$";
-    if (hostname.includes(".cn") || hostname.includes("/cn/")) return "¥";
-  }
-
+  if (text.includes("$")) return "$";
   return "$";
 }
 
-// FIX: Completely rewritten without any invisible characters
 function getCurrencySymbol(code: string): string {
+  if (!code || typeof code !== "string") return "$";
+  const upperCode = code.toUpperCase();
   const currencyMap: Record<string, string> = {
     USD: "$",
     EUR: "€",
@@ -530,8 +366,49 @@ function getCurrencySymbol(code: string): string {
     INR: "₹",
     CAD: "C$",
     AUD: "A$",
-    RMB: "¥",
   };
+  return currencyMap[upperCode] || upperCode;
+}
 
-  return currencyMap[code.toUpperCase()] || code;
+function makeAbsoluteUrl(
+  src: string | undefined,
+  baseUrl: string,
+): string | undefined {
+  if (!src || typeof src !== "string") return undefined;
+  src = src.trim();
+  if (!src) return undefined;
+  if (/^(https?:)?\/\//i.test(src)) {
+    return src.startsWith("//") ? "https:" + src : src;
+  }
+  if (src.startsWith("data:")) return src;
+  if (!baseUrl || typeof baseUrl !== "string") {
+    return src.startsWith("/") ? undefined : src;
+  }
+  try {
+    const base = new URL(baseUrl);
+    const resolvedUrl = new URL(src, base).href;
+    return resolvedUrl;
+  } catch (e) {
+    return undefined;
+  }
+}
+
+function parseSrcset(srcset: string): string {
+  if (!srcset || typeof srcset !== "string") return "";
+  try {
+    const parts = srcset.split(",").map((s) => {
+      const trimmed = s.trim();
+      const spaceIndex = trimmed.lastIndexOf(" ");
+      if (spaceIndex === -1) return { url: trimmed, width: 0 };
+      const url = trimmed.substring(0, spaceIndex).trim();
+      return { url, width: 0 };
+    });
+    const firstValidUrl = parts.find((p) => p.url);
+    if (firstValidUrl) return firstValidUrl.url;
+    return "";
+  } catch (e) {
+    const parts = srcset.split(",").map((s) => s.trim());
+    const lastPart = parts[parts.length - 1];
+    return lastPart?.split(" ")[0] || "";
+  }
 }

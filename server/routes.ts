@@ -12,6 +12,7 @@ import { z } from "zod";
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // Scrape product from URL
+  // Scrape product from URL - ENHANCED VERSION
   app.post("/api/scrape", async (req, res) => {
     try {
       const { url } = req.body;
@@ -19,13 +20,55 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "URL is required" });
       }
 
+      // Validate URL format
+      try {
+        new URL(url);
+      } catch (e) {
+        return res.status(400).json({ error: "Invalid URL format" });
+      }
+
+      console.log(`[API] Scraping request for: ${url}`);
+
       const scrapedProduct = await scrapeProductFromUrl(url);
+
+      if (!scrapedProduct) {
+        return res.status(404).json({
+          error: "Could not extract product information from this URL",
+          suggestion: "Try a different product page or website",
+        });
+      }
+
       res.json(scrapedProduct);
     } catch (error) {
       console.error("Scraping error:", error);
-      const message =
-        error instanceof Error ? error.message : "Failed to scrape product";
-      res.status(500).json({ error: message });
+
+      // User-friendly error messages
+      let errorMessage = "Failed to scrape product information";
+      let statusCode = 500;
+
+      if (error instanceof Error) {
+        if (error.message.includes("403")) {
+          errorMessage =
+            "This website is blocking our requests. Please try a different website or product.";
+          statusCode = 403;
+        } else if (error.message.includes("timeout")) {
+          errorMessage = "The request timed out. Please try again.";
+          statusCode = 408;
+        } else if (error.message.includes("Network request failed")) {
+          errorMessage =
+            "Unable to reach the website. Please check the URL and try again.";
+          statusCode = 502;
+        } else if (error.message.includes("404")) {
+          errorMessage = "Product not found. Please check the URL.";
+          statusCode = 404;
+        } else if (error.message.includes("Failed to extract product title")) {
+          errorMessage =
+            "Could not find product information on this page. The page structure may not be supported.";
+          statusCode = 422;
+        }
+      }
+
+      res.status(statusCode).json({ error: errorMessage });
     }
   });
 
